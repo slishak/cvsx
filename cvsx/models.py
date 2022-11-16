@@ -37,23 +37,8 @@ class SmithCVS(eqx.Module):
         volume_ratios: bool = False,
     ):
         params = p.parameters[parameter_source]
-        self.mt = c.Valve(**params["mt"])
-        self.tc = c.Valve(**params["tc"])
-        self.av = c.Valve(**params["av"])
-        self.pv = c.Valve(**params["pv"])
-        self.pul = c.BloodVessel(**params["pul"])
-        self.sys = c.BloodVessel(**params["sys"])
-        self.lvf = c.PressureVolume(**params["lvf"])
-        self.rvf = c.PressureVolume(**params["rvf"])
-        self.spt = c.PressureVolume(**params["spt"])
-        self.pcd = c.PressureVolume(**params["pcd"])
-        self.vc = c.PressureVolume(**params["vc"])
-        self.pa = c.PressureVolume(**params["pa"])
-        self.pu = c.PressureVolume(**params["pu"])
-        self.ao = c.PressureVolume(**params["ao"])
-        self.cd = drv.GaussianCardiacDriver(**params["cd"])
-        self.v_tot = params["v_tot"]
-        self.p_pl = params["p_pl"]
+        self.parameterise(params)
+
         self.p_pl_affects_pu_and_pa = p_pl_affects_pu_and_pa
         self.volume_ratios = volume_ratios
 
@@ -61,9 +46,12 @@ class SmithCVS(eqx.Module):
             raise NotImplementedError
 
     def parameterise(self, params: dict):
-        # TODO: wire up
         for field in fields(self):
-            field_params = params[field.name]
+            try:
+                field_params = params[field.name]
+            except KeyError:
+                continue
+
             if isinstance(field_params, dict):
                 setattr(self, field.name, field.type(**field_params))
             else:
@@ -177,35 +165,8 @@ class InertialSmithCVS(SmithCVS):
     av: c.InertialValve
     pv: c.InertialValve
 
-    def __init__(
-        self,
-        parameter_source: str = "smith",
-        p_pl_affects_pu_and_pa: bool = True,
-        volume_ratios: bool = False,
-    ):
-        params = p.parameters[parameter_source]
-        self.mt = c.InertialValve(**params["mt"])
-        self.tc = c.InertialValve(**params["tc"])
-        self.av = c.InertialValve(**params["av"])
-        self.pv = c.InertialValve(**params["pv"])
-        self.pul = c.BloodVessel(**params["pul"])
-        self.sys = c.BloodVessel(**params["sys"])
-        self.lvf = c.PressureVolume(**params["lvf"])
-        self.rvf = c.PressureVolume(**params["rvf"])
-        self.spt = c.PressureVolume(**params["spt"])
-        self.pcd = c.PressureVolume(**params["pcd"])
-        self.vc = c.PressureVolume(**params["vc"])
-        self.pa = c.PressureVolume(**params["pa"])
-        self.pu = c.PressureVolume(**params["pu"])
-        self.ao = c.PressureVolume(**params["ao"])
-        self.cd = drv.GaussianCardiacDriver(**params["cd"])
-        self.v_tot = params["v_tot"]
-        self.p_pl = params["p_pl"]
-        self.p_pl_affects_pu_and_pa = p_pl_affects_pu_and_pa
-        self.volume_ratios = volume_ratios
-
-        if volume_ratios:
-            raise NotImplementedError
+    def __init__(self, parameter_source: str = "revie", *args, **kwargs):
+        super().__init__(parameter_source, *args, **kwargs)
 
     def derivatives(self, flow_rates: dict, p_v: dict) -> dict:
         derivatives = super().derivatives(flow_rates, p_v)

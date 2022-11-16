@@ -1,31 +1,38 @@
+from time import perf_counter
+
 import jax
+import jax.numpy as jnp
 import diffrax
+import matplotlib.pyplot as plt
 
 from cvsx import models
+from cvsx.unit_conversions import convert
 
 jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_platform_name", "cpu")
 
 
 @jax.jit
 def main():
 
-    cvs = models.InertialSmithCVS(**inertial_params)
+    cvs = models.InertialSmithCVS(parameter_source="revie")
 
     init_states = {
-        "q_mt": 245.5813,
-        "v_lv": 94.6812,
-        "q_av": 0.0,
-        "v_ao": 133.3381,
-        "v_vc": 329.7803,
-        "q_tc": 190.0661,
-        "v_rv": 90.7302,
-        "q_pv": 0.0,
-        "v_pa": 43.0123,
-        "v_pu": 808.4579,
+        "v_lv": convert(94.6812, "ml"),
+        "v_ao": convert(133.3381, "ml"),
+        "v_vc": convert(329.7803, "ml"),
+        "v_rv": convert(90.7302, "ml"),
+        "v_pa": convert(43.0123, "ml"),
+        "v_pu": convert(808.4579, "ml"),
+        "q_mt": convert(245.5813, "ml/s"),
+        "q_av": convert(0.0, "ml/s"),
+        "q_tc": convert(190.0661, "ml/s"),
+        "q_pv": convert(0.0, "ml/s"),
     }
-
-    solver = diffrax.Tsit5()  # Slightly more efficient than Dopri5
+    nl_solver = diffrax.NewtonNonlinearSolver(
+        rtol=1e-4,
+        atol=1e-7,
+    )
+    ode_solver = diffrax.Tsit5()  # Slightly more efficient than Dopri5
     term = diffrax.ODETerm(cvs)
     stepsize_controller = diffrax.PIDController(
         rtol=1e-4,
@@ -35,13 +42,14 @@ def main():
 
     res = diffrax.diffeqsolve(
         term,
-        solver,
+        ode_solver,
         0.0,
         15.0,
         None,
         init_states,
+        args=(nl_solver,),
         stepsize_controller=stepsize_controller,
-        max_steps=int(1e7),
+        max_steps=16**4,
         saveat=diffrax.SaveAt(steps=True),
     )
 
@@ -49,14 +57,15 @@ def main():
 
 
 if __name__ == "__main__":
-    print("Compile")
-    t0 = perf_counter()
-    main()
-    t1 = perf_counter()
-    print(f"Compiled in {t1-t0:6f}s. Start timing")
-    res = main()
-    t2 = perf_counter()
-    print(f'Final time: {t2-t1:.6f}s, {res.stats["num_steps"]} steps')
+    with jax.default_device(jax.devices("cpu")[0]):
+        print("Compile")
+        t0 = perf_counter()
+        main()
+        t1 = perf_counter()
+        print(f"Compiled in {t1-t0:6f}s. Start timing")
+        res = main()
+        t2 = perf_counter()
+        print(f'Final time: {t2-t1:.6f}s, {res.stats["num_steps"]} steps')
 
     fig, ax = plt.subplots(3, 1, sharex=True)
 
