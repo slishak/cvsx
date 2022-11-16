@@ -50,11 +50,7 @@ class Converter:
     def __init__(
         self,
         default_pressure: str = "mmHg",
-        default_volume: str = "l",
-        default_inverse_volume: str = "1/l",
-        default_elastance: str = "mmHg/l",
-        default_resistance: str = "mmHg s/l",
-        default_inductance: str = "mmHg s^2/l",
+        default_volume: str = "ml",
     ):
         """_summary_
 
@@ -64,14 +60,6 @@ class Converter:
             Default pressure unit, by default "mmHg"
         default_volume : str, optional
             Default volume unit, by default "l"
-        default_inverse_volume : str, optional
-            Default inverse volume unit, by default "1/l"
-        default_elastance : str, optional
-            Default elastance unit, by default "mmHg/l"
-        default_resistance : str, optional
-            Default resistance unit, by default "mmHg s/l"
-        default_inductance : str, optional
-            Default inductance unit, by default "mmHg s^2/l"
         """
         self.quantities = [
             Quantity(
@@ -95,12 +83,20 @@ class Converter:
                 default=default_volume,
             ),
             Quantity(
+                "flow_rate",
+                [
+                    Unit("l/s", 1),
+                    Unit("ml/s", constants.milli),
+                ],
+                default=f"{default_volume}/s",
+            ),
+            Quantity(
                 "inverse_volume",
                 [
                     Unit("1/l", 1),
                     Unit("1/ml", constants.kilo),
                 ],
-                default=default_inverse_volume,
+                default=f"1/{default_volume}",
             ),
             Quantity(
                 "elastance",
@@ -110,7 +106,7 @@ class Converter:
                     Unit("mmHg/l", constants.mmHg * constants.milli),
                     Unit("cmH2O/l", constants.g * constants.centi),
                 ],
-                default=default_elastance,
+                default=f"{default_pressure}/{default_volume}",
             ),
             Quantity(
                 "resistance",
@@ -120,7 +116,7 @@ class Converter:
                     Unit("mmHg s/l", constants.mmHg * constants.milli),
                     Unit("cmH2O s/l", constants.g * constants.centi),
                 ],
-                default=default_resistance,
+                default=f"{default_pressure} s/{default_volume}",
             ),
             Quantity(
                 "inductance",
@@ -130,7 +126,7 @@ class Converter:
                     Unit("mmHg s^2/l", constants.mmHg * constants.milli),
                     Unit("cmH2O s^2/l", constants.g * constants.centi),
                 ],
-                default=default_inductance,
+                default=f"{default_pressure} s^2/{default_volume}",
             ),
         ]
 

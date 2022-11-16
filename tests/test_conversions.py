@@ -11,21 +11,22 @@ def test_conversion_pa_to_kpa():
     assert kpa == 1
 
 
-def test_default_to_ml():
-    l = 1
-    ml = convert(l, to="ml")
-    assert ml == 1000
-
-
-def test_default_from_ml():
+def test_default_to_l():
     ml = 1000
-    l = convert(ml, "ml")
+    l = convert(ml, to="l")
     assert l == 1
 
 
-def test_no_conversion():
+def test_default_from_l():
+    l = 1
+    ml = convert(l, "l")
+    assert ml == 1000
+
+
+@pytest.mark.parametrize("quantity", [q.default for q in Converter().quantities])
+def test_no_conversion_with_default(quantity):
     value = 1
-    l = convert(value, "l", "l")
+    l = convert(value, quantity)
     assert value is l
 
 
