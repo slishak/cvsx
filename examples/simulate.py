@@ -14,6 +14,9 @@ jax.config.update("jax_enable_x64", True)
 @jax.jit
 def main():
 
+    rtol = 1e-4
+    atol = 1e-7
+
     cvs = models.InertialSmithCVS(parameter_source="revie")
 
     init_states = {
@@ -29,14 +32,14 @@ def main():
         "q_pv": convert(0.0, "ml/s"),
     }
     nl_solver = diffrax.NewtonNonlinearSolver(
-        rtol=1e-4,
-        atol=1e-7,
+        rtol=rtol,
+        atol=atol,
     )
     ode_solver = diffrax.Tsit5()  # Slightly more efficient than Dopri5
     term = diffrax.ODETerm(cvs)
     stepsize_controller = diffrax.PIDController(
-        rtol=1e-4,
-        atol=1e-7,
+        rtol=rtol,
+        atol=atol,
         dtmax=1e-2,
     )
 
