@@ -84,7 +84,7 @@ SMITH_2007 = {
         "c": jnp.array([0.375]),
         "hr": 80.0,
     },
-    "p_pl": convert(-4, "mmHg"),
+    "p_pl": convert(-4.0, "mmHg"),
     "v_tot": convert(5.5, "l"),
 }
 
@@ -173,7 +173,7 @@ REVIE_2012 = {
         "c": jnp.array([0.375]),
         "hr": 80.0,
     },
-    "p_pl": convert(-4, "mmHg"),
+    "p_pl": convert(-4.0, "mmHg"),
     "v_tot": convert(1.5, "l"),  # Only simulates stressed volume?
 }
 
