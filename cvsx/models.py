@@ -2,9 +2,7 @@ from dataclasses import fields
 
 import diffrax
 import equinox as eqx
-import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 
 from cvsx import components as c
 from cvsx import cardiac_drivers as drv
@@ -31,15 +29,6 @@ class SmithCVS(eqx.Module):
     p_pl: float
     p_pl_affects_pu_and_pa: bool = True
     volume_ratios: bool = False
-
-    def parameterise(self, params: dict):
-        # TODO: wire up
-        for field in fields(self):
-            field_params = params[field.name]
-            if isinstance(field_params, dict):
-                setattr(self, field.name, field.type(**field_params))
-            else:
-                setattr(self, field.name, field.type(field_params))
 
     def __init__(
         self,
@@ -71,6 +60,15 @@ class SmithCVS(eqx.Module):
         if volume_ratios:
             raise NotImplementedError
 
+    def parameterise(self, params: dict):
+        # TODO: wire up
+        for field in fields(self):
+            field_params = params[field.name]
+            if isinstance(field_params, dict):
+                setattr(self, field.name, field.type(**field_params))
+            else:
+                setattr(self, field.name, field.type(field_params))
+
     def __call__(
         self,
         t: jnp.ndarray,
@@ -78,11 +76,14 @@ class SmithCVS(eqx.Module):
         args: tuple[diffrax.AbstractNonlinearSolver],
     ) -> dict:
         solver = args[0]
-        # jax.debug.print('{t}', t=t)
         e_t = self.cd(t)
         p_v = self.pressures_volumes(e_t, states, solver)
         flow_rates = self.flow_rates(states, p_v)
         derivatives = self.derivatives(flow_rates, p_v)
+
+        # jax.debug.print("{t}", t=t)
+        # jax.debug.print("{t}\n{states}\n{derivatives}", t=t, states=states, derivatives=derivatives)
+
         return derivatives
 
     def pressures_volumes(self, e_t, states, solver):
@@ -175,6 +176,36 @@ class InertialSmithCVS(SmithCVS):
     tc: c.InertialValve
     av: c.InertialValve
     pv: c.InertialValve
+
+    def __init__(
+        self,
+        parameter_source: str = "smith",
+        p_pl_affects_pu_and_pa: bool = True,
+        volume_ratios: bool = False,
+    ):
+        params = p.parameters[parameter_source]
+        self.mt = c.InertialValve(**params["mt"])
+        self.tc = c.InertialValve(**params["tc"])
+        self.av = c.InertialValve(**params["av"])
+        self.pv = c.InertialValve(**params["pv"])
+        self.pul = c.BloodVessel(**params["pul"])
+        self.sys = c.BloodVessel(**params["sys"])
+        self.lvf = c.PressureVolume(**params["lvf"])
+        self.rvf = c.PressureVolume(**params["rvf"])
+        self.spt = c.PressureVolume(**params["spt"])
+        self.pcd = c.PressureVolume(**params["pcd"])
+        self.vc = c.PressureVolume(**params["vc"])
+        self.pa = c.PressureVolume(**params["pa"])
+        self.pu = c.PressureVolume(**params["pu"])
+        self.ao = c.PressureVolume(**params["ao"])
+        self.cd = drv.GaussianCardiacDriver(**params["cd"])
+        self.v_tot = params["v_tot"]
+        self.p_pl = params["p_pl"]
+        self.p_pl_affects_pu_and_pa = p_pl_affects_pu_and_pa
+        self.volume_ratios = volume_ratios
+
+        if volume_ratios:
+            raise NotImplementedError
 
     def derivatives(self, flow_rates: dict, p_v: dict) -> dict:
         derivatives = super().derivatives(flow_rates, p_v)
