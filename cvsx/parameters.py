@@ -192,21 +192,7 @@ cd_chung = {
 }
 
 
-cd_hann = {
-    "ta": 0.25,
-    "tb": 0.305,
-    "tc": 0.48,
-    "td": 0.505,
-    "e'_ta": None,
-    "e_ta": None,
-    "e_tb": None,
-    "e'_td": None,
-    "e_td": None,
-}
-
-
 cd_parameters = {
     "smith": cd_smith,
     "chung": cd_chung,
-    "hann": cd_hann,
 }
