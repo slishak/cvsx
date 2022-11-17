@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from cvsx.unit_conversions import convert
 
 
-SMITH_2007 = {
+smith_2007 = {
     "mt": {
         "r": convert(0.0600, "kPa s/l"),
     },
@@ -88,7 +88,7 @@ SMITH_2007 = {
     "v_tot": convert(5.5, "l"),
 }
 
-REVIE_2012 = {
+revie_2012 = {
     "mt": {
         "r": convert(0.0158, "mmHg s/ml"),
         "l": convert(7.6967e-5, "mmHg s^2/ml"),
@@ -167,18 +167,46 @@ REVIE_2012 = {
         "lam": 0.0,
         "p_0": 0.0,
     },
-    "cd": {
-        "a": jnp.array([1.0]),
-        "b": jnp.array([80.0]),
-        "c": jnp.array([0.375]),
-        "hr": 80.0,
-    },
     "p_pl": convert(-4.0, "mmHg"),
     "v_tot": convert(1.5, "l"),  # Only simulates stressed volume?
 }
 
 
-parameters = {
-    "smith": SMITH_2007,
-    "revie": REVIE_2012,
+cvs_parameters = {
+    "smith": smith_2007,
+    "revie": revie_2012,
+}
+
+
+cd_smith = {
+    "b": 80.0,
+    "hr": 80.0,
+}
+
+
+cd_chung = {
+    "a": jnp.array([0.9556, 0.6249, 0.018]),
+    "b": jnp.array([255.4, 225.3, 4225.0]),
+    "c": jnp.array([0.306, 0.2026, 0.2491]),
+    "hr": 80.0,
+}
+
+
+cd_hann = {
+    "ta": 0.25,
+    "tb": 0.305,
+    "tc": 0.48,
+    "td": 0.505,
+    "e'_ta": None,
+    "e_ta": None,
+    "e_tb": None,
+    "e'_td": None,
+    "e_td": None,
+}
+
+
+cd_parameters = {
+    "smith": cd_smith,
+    "chung": cd_chung,
+    "hann": cd_hann,
 }

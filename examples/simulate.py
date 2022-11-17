@@ -5,19 +5,23 @@ import jax.numpy as jnp
 import diffrax
 import matplotlib.pyplot as plt
 
-from cvsx import models
-from cvsx.unit_conversions import convert
-
 jax.config.update("jax_enable_x64", True)
+
+from cvsx import models
+from cvsx import cardiac_drivers as drv
+from cvsx.unit_conversions import convert
 
 
 @jax.jit
 def main():
 
-    rtol = 1e-4
-    atol = 1e-7
+    rtol = 1e-3
+    atol = 1e-6
 
-    cvs = models.InertialSmithCVS(parameter_source="revie")
+    cvs = models.SmoothInertialSmithCVS(
+        parameter_source="revie",
+        cd=drv.GaussianCardiacDriver(),
+    )
 
     init_states = {
         "v_lv": convert(94.6812, "ml"),
@@ -35,7 +39,7 @@ def main():
         rtol=rtol,
         atol=atol,
     )
-    ode_solver = diffrax.Tsit5()  # Slightly more efficient than Dopri5
+    ode_solver = diffrax.Kvaerno5()
     term = diffrax.ODETerm(cvs)
     stepsize_controller = diffrax.PIDController(
         rtol=rtol,
@@ -43,11 +47,13 @@ def main():
         dtmax=1e-2,
     )
 
+    # out_dbg = cvs(jnp.array(0.0), init_states, (nl_solver,))
+
     res = diffrax.diffeqsolve(
         term,
         ode_solver,
         0.0,
-        15.0,
+        10.0,
         None,
         init_states,
         args=(nl_solver,),
@@ -56,7 +62,9 @@ def main():
         saveat=diffrax.SaveAt(steps=True),
     )
 
-    return res
+    out = cvs(res.ts, res.ys, (nl_solver,), True)
+
+    return res, out
 
 
 if __name__ == "__main__":
@@ -66,26 +74,19 @@ if __name__ == "__main__":
         main()
         t1 = perf_counter()
         print(f"Compiled in {t1-t0:6f}s. Start timing")
-        res = main()
+        res, out = main()
         t2 = perf_counter()
         print(f'Final time: {t2-t1:.6f}s, {res.stats["num_steps"]} steps')
 
-    fig, ax = plt.subplots(3, 1, sharex=True)
+    fig, ax = plt.subplots(len(res.ys), 2, sharex=True)
 
     min_q = 0.0
 
-    for key, val in res.ys.items():
-        i = 0 if key[0] == "v" else 1
-        ax[i].plot(res.ts, val, label=key)
-        if key[0] == "q":
-            min_q = min(min_q, min(val[~jnp.isinf(val)]))
-            ax[2].plot(res.ts, val, label=key)
-
-    ax[1].set_xlabel("Time (s)")
-    ax[0].set_ylabel("Volume")
-    ax[1].set_ylabel("Flow rate")
-    ax[2].set_ylabel("Flow rate (zoomed to 0)")
-    ax[2].set_ylim([min_q * 1.5, -min_q * 1.5])
+    for i, (key, val) in enumerate(res.ys.items()):
+        ax[i, 0].plot(res.ts, val, ".-", label=key)
+        ax[i, 1].plot(res.ts, out[f"d{key}_dt"], ".-", label=key)
+        ax[i, 0].set_ylabel(key)
+        ax[i, 1].set_ylabel(f"d{key}_dt")
 
     plt.figure()
     plt.hist(jnp.log(jnp.diff(res.ts[~jnp.isinf(res.ts)])))

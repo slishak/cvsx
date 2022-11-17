@@ -1,6 +1,8 @@
 import equinox as eqx
 import jax.numpy as jnp
 
+from cvsx.unit_conversions import convert
+
 
 class PressureVolume(eqx.Module):
     e: float
@@ -65,3 +67,37 @@ class InertialValve(Valve):
     ) -> jnp.ndarray:
         dq_dt = (p_upstream - p_downstream - q_flow * self.r) / self.l
         return jnp.where(self.open(p_upstream, p_downstream, q_flow), dq_dt, 0.0)
+
+
+class SmoothInertialValve(InertialValve):
+    q_threshold_slope: float = convert(10.0, "ml/s")
+    q_threshold_min: float = convert(10.0, "ml/s")
+
+    def flow_rate_deriv(
+        self,
+        p_upstream: jnp.ndarray,
+        p_downstream: jnp.ndarray,
+        q_flow: jnp.ndarray,
+    ) -> jnp.ndarray:
+        # Differential pressure across valve
+        dp = p_upstream - p_downstream
+        # Find threshold flow rate below which to smooth out
+        q_threshold = self.q_threshold_slope * -dp / convert(1.0, "mmHg")
+        q_threshold = jnp.where(
+            q_threshold > self.q_threshold_min, q_threshold, self.q_threshold_min
+        )
+
+        # Flow rate derivative
+        dq_dt = (dp - q_flow * self.r) / self.l
+
+        # Jacobian element d(dq_dt)_dq at threshold point, to match gradient
+        dq_dt_at_q_threshold = (dp - q_threshold * self.r) / self.l
+
+        # Quadratic smoothing between threshold and (0, 0)
+        a = -self.r / (self.l * q_threshold) - dq_dt_at_q_threshold / q_threshold**2
+        b = 2 * dq_dt_at_q_threshold / q_threshold + self.r / self.l
+        dq_dt_smooth = a * q_flow**2 + b * q_flow
+
+        dq_dt = jnp.where((dp > 0) | (q_flow > q_threshold), dq_dt, dq_dt_smooth)
+
+        return dq_dt

@@ -1,7 +1,9 @@
 from dataclasses import fields
+from typing import Optional
 
 import diffrax
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 
 from cvsx import components as c
@@ -24,20 +26,22 @@ class SmithCVS(eqx.Module):
     pa: c.PressureVolume
     pu: c.PressureVolume
     ao: c.PressureVolume
-    cd: drv.GaussianCardiacDriver
+    cd: drv.CardiacDriverBase
     v_tot: float
     p_pl: float
     p_pl_affects_pu_and_pa: bool = True
     volume_ratios: bool = False
+    smooth_valves: bool = True
 
     def __init__(
         self,
         parameter_source: str = "smith",
         p_pl_affects_pu_and_pa: bool = True,
         volume_ratios: bool = False,
+        cd: Optional[drv.CardiacDriverBase] = None,
     ):
-        params = p.parameters[parameter_source]
-        self.parameterise(params)
+        params = p.cvs_parameters[parameter_source]
+        self.parameterise(params, cd=cd)
 
         self.p_pl_affects_pu_and_pa = p_pl_affects_pu_and_pa
         self.volume_ratios = volume_ratios
@@ -45,8 +49,14 @@ class SmithCVS(eqx.Module):
         if volume_ratios:
             raise NotImplementedError
 
-    def parameterise(self, params: dict):
+    def parameterise(self, params: dict, cd: Optional[drv.CardiacDriverBase] = None):
+        if cd is None:
+            cd = drv.SimpleCardiacDriver()
         for field in fields(self):
+            if field.name == "cd":
+                self.cd = cd
+                continue
+
             try:
                 field_params = params[field.name]
             except KeyError:
@@ -62,6 +72,7 @@ class SmithCVS(eqx.Module):
         t: jnp.ndarray,
         states: dict,
         args: tuple[diffrax.AbstractNonlinearSolver],
+        all_outputs=False,
     ) -> dict:
         solver = args[0]
         e_t = self.cd(t)
@@ -71,6 +82,12 @@ class SmithCVS(eqx.Module):
 
         # jax.debug.print("{t}", t=t)
         # jax.debug.print("{t}\n{states}\n{derivatives}", t=t, states=states, derivatives=derivatives)
+
+        if all_outputs:
+            out = p_v | flow_rates
+            out.update({f"d{key}_dt": val for key, val in derivatives.items()})
+            out["e_t"] = e_t
+            return out
 
         return derivatives
 
@@ -145,9 +162,21 @@ class SmithCVS(eqx.Module):
         return derivatives
 
     def solve_v_spt(self, v_lv, v_rv, e_t, solver):
-        v_spt_guess = 0.0
-        solution = solver(self.v_spt_residual, v_spt_guess, (v_lv, v_rv, e_t))
-        return solution.root
+        sol = lambda v_lv_i, v_rv_i, e_t_i: solver(
+            self.v_spt_residual, 0.0, (v_lv_i, v_rv_i, e_t_i)
+        ).root
+        sol_v = jax.vmap(sol, (0, 0, 0), 0)
+        v_lv_1d = jnp.atleast_1d(v_lv)
+        v_rv_1d = jnp.atleast_1d(v_rv)
+        e_t_1d = jnp.atleast_1d(e_t)
+        v_spt = sol_v(v_lv_1d, v_rv_1d, e_t_1d)
+
+        v_spt = jnp.reshape(v_spt, v_lv.shape)
+
+        return v_spt
+
+        # solution = solver(self.v_spt_residual, v_spt_guess, (v_lv, v_rv, e_t))
+        # return solution.root
 
     def v_spt_residual(self, v_spt, args):
         v_lv, v_rv, e_t = args
@@ -183,6 +212,23 @@ class InertialSmithCVS(SmithCVS):
             "q_av": jnp.maximum(states["q_av"], 0.0),
             "q_tc": jnp.maximum(states["q_tc"], 0.0),
             "q_pv": jnp.maximum(states["q_pv"], 0.0),
+            "q_pul": self.pul.flow_rate(p_v["p_pa"], p_v["p_pu"]),
+            "q_sys": self.sys.flow_rate(p_v["p_ao"], p_v["p_vc"]),
+        }
+
+
+class SmoothInertialSmithCVS(InertialSmithCVS):
+    mt: c.SmoothInertialValve
+    tc: c.SmoothInertialValve
+    av: c.SmoothInertialValve
+    pv: c.SmoothInertialValve
+
+    def flow_rates(self, states: dict, p_v: dict) -> dict:
+        return {
+            "q_mt": states["q_mt"],
+            "q_av": states["q_av"],
+            "q_tc": states["q_tc"],
+            "q_pv": states["q_pv"],
             "q_pul": self.pul.flow_rate(p_v["p_pa"], p_v["p_pu"]),
             "q_sys": self.sys.flow_rate(p_v["p_ao"], p_v["p_vc"]),
         }
