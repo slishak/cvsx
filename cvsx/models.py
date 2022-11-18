@@ -46,9 +46,6 @@ class SmithCVS(eqx.Module):
         self.p_pl_affects_pu_and_pa = p_pl_affects_pu_and_pa
         self.volume_ratios = volume_ratios
 
-        if volume_ratios:
-            raise NotImplementedError
-
     def parameterise(self, params: dict, cd: Optional[drv.CardiacDriverBase] = None):
         if cd is None:
             cd = drv.SimpleCardiacDriver()
@@ -74,16 +71,32 @@ class SmithCVS(eqx.Module):
         args: tuple[diffrax.AbstractNonlinearSolver],
         all_outputs=False,
     ) -> dict:
+
         solver = args[0]
+
         if self.cd.dynamic:
             e_t, ds_dt = self.cd(t, states["s"])
         else:
             e_t = self.cd(t)
+
+        if self.volume_ratios:
+            states = {
+                key: val * self.v_tot if key.startswith("v_") else val
+                for key, val in states.items()
+            }
+
         p_v = self.pressures_volumes(e_t, states, solver)
         flow_rates = self.flow_rates(states, p_v)
         derivatives = self.derivatives(flow_rates, p_v)
+
         if self.cd.dynamic:
             derivatives["s"] = ds_dt
+
+        if self.volume_ratios:
+            derivatives = {
+                key: val / self.v_tot if key.startswith("v_") else val
+                for key, val in derivatives.items()
+            }
 
         # jax.debug.print("{t}", t=t)
         # jax.debug.print("{t}\n{states}\n{derivatives}", t=t, states=states, derivatives=derivatives)
@@ -150,18 +163,13 @@ class SmithCVS(eqx.Module):
         }
 
     def derivatives(self, flow_rates: dict, p_v: dict) -> dict:
-        if self.volume_ratios:
-            deriv_scale = self.v_tot
-        else:
-            deriv_scale = 1.0
-
         derivatives = {
-            "v_pa": (flow_rates["q_pv"] - flow_rates["q_pul"]) / deriv_scale,
-            "v_pu": (flow_rates["q_pul"] - flow_rates["q_mt"]) / deriv_scale,
-            "v_lv": (flow_rates["q_mt"] - flow_rates["q_av"]) / deriv_scale,
-            "v_ao": (flow_rates["q_av"] - flow_rates["q_sys"]) / deriv_scale,
-            "v_vc": (flow_rates["q_sys"] - flow_rates["q_tc"]) / deriv_scale,
-            "v_rv": (flow_rates["q_tc"] - flow_rates["q_pv"]) / deriv_scale,
+            "v_pa": flow_rates["q_pv"] - flow_rates["q_pul"],
+            "v_pu": flow_rates["q_pul"] - flow_rates["q_mt"],
+            "v_lv": flow_rates["q_mt"] - flow_rates["q_av"],
+            "v_ao": flow_rates["q_av"] - flow_rates["q_sys"],
+            "v_vc": flow_rates["q_sys"] - flow_rates["q_tc"],
+            "v_rv": flow_rates["q_tc"] - flow_rates["q_pv"],
         }
 
         return derivatives

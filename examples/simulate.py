@@ -19,24 +19,26 @@ def main(dynamic=False):
     rtol = 1e-3
     atol = 1e-6
 
-    # f_hr = lambda t: 80 + 20 * jnp.tanh(0.3 * (t - 20))
     if dynamic:
-        f_hr = lambda t: jnp.full_like(t, fill_value=60.0)
+        f_hr = lambda t: 80 + 20 * jnp.tanh(0.3 * (t - 20))
+        # f_hr = lambda t: jnp.full_like(t, fill_value=60.0)
     else:
         f_hr = 60.0
 
     cvs = models.SmoothInertialSmithCVS(
         parameter_source="revie",
         cd=drv.SimpleCardiacDriver(hr=f_hr),
+        volume_ratios=True,
     )
+    v_scale = cvs.v_tot if cvs.volume_ratios else 1.0
 
     init_states = {
-        "v_lv": convert(94.6812, "ml"),
-        "v_ao": convert(133.3381, "ml"),
-        "v_vc": convert(329.7803, "ml"),
-        "v_rv": convert(90.7302, "ml"),
-        "v_pa": convert(43.0123, "ml"),
-        "v_pu": convert(808.4579, "ml"),
+        "v_lv": convert(94.6812, "ml") / v_scale,
+        "v_ao": convert(133.3381, "ml") / v_scale,
+        "v_vc": convert(329.7803, "ml") / v_scale,
+        "v_rv": convert(90.7302, "ml") / v_scale,
+        "v_pa": convert(43.0123, "ml") / v_scale,
+        "v_pu": convert(808.4579, "ml") / v_scale,
         "q_mt": convert(245.5813, "ml/s"),
         "q_av": convert(0.0, "ml/s"),
         "q_tc": convert(190.0661, "ml/s"),
@@ -119,9 +121,19 @@ if __name__ == "__main__":
         ax[i, 0].set_ylabel(key)
         ax[i, 1].set_ylabel(f"d{key}_dt")
 
-    plt.figure()
-    plt.plot(res1.ts, out1["e_t"], label="Static")
-    plt.plot(res2.ts, out2["e_t"], label="Dynamic")
+    fig, ax = plt.subplots(4, 1, sharex=True)
+    ax[0].plot(res1.ts, out1["p_ao"], label="Static")
+    ax[0].plot(res2.ts, out2["p_ao"], label="Dynamic")
+    ax[0].set_ylabel("p_ao")
+    ax[1].plot(res1.ts, out1["p_vc"], label="Static")
+    ax[1].plot(res2.ts, out2["p_vc"], label="Dynamic")
+    ax[1].set_ylabel("p_vc")
+    ax[2].plot(res1.ts, out1["p_pa"], label="Static")
+    ax[2].plot(res2.ts, out2["p_pa"], label="Dynamic")
+    ax[2].set_ylabel("p_pa")
+    ax[3].plot(res1.ts, out1["e_t"], label="Static")
+    ax[3].plot(res2.ts, out2["e_t"], label="Dynamic")
+    ax[3].set_ylabel("e(t)")
 
     # plt.figure()
     # plt.hist(jnp.log(jnp.diff(res.ts[~jnp.isinf(res.ts)])))
