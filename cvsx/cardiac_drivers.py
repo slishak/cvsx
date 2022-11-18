@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Callable, Optional, Union
 
 import equinox as eqx
 import jax
@@ -8,11 +9,23 @@ from cvsx import parameters as p
 
 
 class CardiacDriverBase(ABC, eqx.Module):
-    hr: float
+    hr: Union[float, Callable]
+    dynamic: bool = False
 
-    def __call__(self, t: jnp.ndarray) -> jnp.ndarray:
-        t_wrapped = jnp.remainder(t, 60 / self.hr)
-        return self.e(t_wrapped)
+    def __init__(self, hr: Union[float, Callable]):
+        self.hr = hr
+        self.dynamic = callable(hr)
+
+    def __call__(self, t: jnp.ndarray, s: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+        if self.dynamic:
+            ds_dt = self.hr(t) / 60
+            s_wrapped = jnp.remainder(s, 1)
+            e_s = self.e(s_wrapped)
+            return e_s, ds_dt
+        else:
+            t_wrapped = jnp.remainder(t, 60 / self.hr)
+            e_t = self.e(t_wrapped)
+            return e_t
 
     @abstractmethod
     def e(self, t: jnp.ndarray) -> jnp.ndarray:
@@ -22,14 +35,23 @@ class CardiacDriverBase(ABC, eqx.Module):
 class SimpleCardiacDriver(CardiacDriverBase):
     b: float
 
-    def __init__(self, parameter_source: str = "smith"):
-
+    def __init__(
+        self,
+        parameter_source: str = "smith",
+        hr: Optional[Union[float, Callable]] = None,
+    ):
         params = p.cd_parameters[parameter_source]
         self.b = params["b"]
-        self.hr = params["hr"]
+        if hr is None:
+            hr = params["hr"]
+        super().__init__(hr)
 
     def e(self, t: jnp.ndarray) -> jnp.ndarray:
-        return jnp.exp(-self.b * (t - 30 / self.hr) ** 2)
+        if self.dynamic:
+            hr = self.hr(t)
+        else:
+            hr = self.hr
+        return jnp.exp(-self.b * (t - 30 / hr) ** 2)
 
 
 class GaussianCardiacDriver(CardiacDriverBase):
@@ -37,13 +59,19 @@ class GaussianCardiacDriver(CardiacDriverBase):
     b: jnp.ndarray
     c: jnp.ndarray
 
-    def __init__(self, parameter_source: str = "chung"):
+    def __init__(
+        self,
+        parameter_source: str = "chung",
+        hr: Optional[Union[float, Callable]] = None,
+    ):
 
         params = p.cd_parameters[parameter_source]
         self.a = params["a"]
         self.b = params["b"]
         self.c = params["c"]
-        self.hr = params["hr"]
+        if hr is None:
+            hr = params["hr"]
+        super().__init__(hr)
 
     def e(self, t: jnp.ndarray) -> jnp.ndarray:
 

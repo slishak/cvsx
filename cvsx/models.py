@@ -75,10 +75,15 @@ class SmithCVS(eqx.Module):
         all_outputs=False,
     ) -> dict:
         solver = args[0]
-        e_t = self.cd(t)
+        if self.cd.dynamic:
+            e_t, ds_dt = self.cd(t, states["s"])
+        else:
+            e_t = self.cd(t)
         p_v = self.pressures_volumes(e_t, states, solver)
         flow_rates = self.flow_rates(states, p_v)
         derivatives = self.derivatives(flow_rates, p_v)
+        if self.cd.dynamic:
+            derivatives["s"] = ds_dt
 
         # jax.debug.print("{t}", t=t)
         # jax.debug.print("{t}\n{states}\n{derivatives}", t=t, states=states, derivatives=derivatives)
