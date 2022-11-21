@@ -81,3 +81,55 @@ class GaussianCardiacDriver(CardiacDriverBase):
         e_t = f_v(t_1d)
 
         return jnp.reshape(e_t, t.shape)
+
+
+class LearnedHR(SimpleCardiacDriver):
+    array: jnp.ndarray
+    inds: jnp.ndarray
+    min_interval: float
+    max_interval: float
+    n_subsample: int
+
+    def __init__(
+        self,
+        parameter_source: str = "smith",
+        n_beats: int = 40 * 200 // 60 + 1,
+        guess_hr: float = 60.0,
+        min_hr: float = 20.0,
+        max_hr: float = 200.0,
+        n_subsample: int = 2,
+    ):
+        super().__init__(
+            parameter_source,
+        )
+        self.min_interval = 60 / max_hr
+        self.max_interval = 60 / min_hr
+        self.array = jnp.full(n_beats * n_subsample, fill_value=self.normalise(60 / guess_hr))
+        self.inds = jnp.arange(n_beats * n_subsample) / n_subsample
+        self.n_subsample = n_subsample
+
+    def beat_times(self):
+        intervals = (
+            jax.nn.sigmoid(self.array) * (self.max_interval - self.min_interval) + self.min_interval
+        )
+
+        return jnp.cumsum(intervals / self.n_subsample) - self.max_interval
+
+    def normalise(self, interval):
+        return jsp.logit((interval - self.min_interval) / (self.max_interval - self.min_interval))
+
+    def f_interp(self, t):
+        return jnp.interp(t, self.beat_times(), self.inds)
+
+    def __call__(self, t: jnp.ndarray, s: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+        interp_vmap = jax.vmap(
+            self.f_interp,
+            0,
+            -1,
+        )
+        t_1d = jnp.atleast_1d(t)
+        s = interp_vmap(t_1d)
+        s = jnp.reshape(s, t.shape)
+        s_wrapped = jnp.remainder(s, 1)
+        e_s = self.e(s_wrapped)
+        return e_s
