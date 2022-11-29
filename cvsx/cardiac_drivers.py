@@ -4,13 +4,17 @@ from typing import Callable, Optional, Union
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.scipy.special as jsp
 
 from cvsx import parameters as p
 
 
 class CardiacDriverBase(ABC, eqx.Module):
-    hr: Union[float, Callable]
     dynamic: bool = False
+
+
+class FixedCardiacDriver(CardiacDriverBase):
+    hr: Union[float, Callable]
 
     def __init__(self, hr: Union[float, Callable]):
         self.hr = hr
@@ -32,7 +36,7 @@ class CardiacDriverBase(ABC, eqx.Module):
         pass
 
 
-class SimpleCardiacDriver(CardiacDriverBase):
+class SimpleCardiacDriver(FixedCardiacDriver):
     b: float
 
     def __init__(
@@ -54,7 +58,7 @@ class SimpleCardiacDriver(CardiacDriverBase):
         return jnp.exp(-self.b * (t - 30 / hr) ** 2)
 
 
-class GaussianCardiacDriver(CardiacDriverBase):
+class GaussianCardiacDriver(FixedCardiacDriver):
     a: jnp.ndarray
     b: jnp.ndarray
     c: jnp.ndarray
@@ -84,42 +88,76 @@ class GaussianCardiacDriver(CardiacDriverBase):
 
 
 class LearnedHR(SimpleCardiacDriver):
-    array: jnp.ndarray
+    beat_array: jnp.ndarray
+    warp_array: jnp.ndarray
     inds: jnp.ndarray
+    e_sample: jnp.ndarray
+    offset: jnp.ndarray
     min_interval: float
     max_interval: float
-    n_subsample: int
+    n_beats: int
 
     def __init__(
         self,
         parameter_source: str = "smith",
-        n_beats: int = 40 * 200 // 60 + 1,
+        n_beats: int = 100,
         guess_hr: float = 60.0,
-        min_hr: float = 20.0,
-        max_hr: float = 200.0,
-        n_subsample: int = 2,
+        min_interval: float = 60 / 200,
+        max_interval: float = 60 / 20,
+        e_sample: jnp.ndarray = jnp.array([0.05, 0.8]),
     ):
         super().__init__(
             parameter_source,
-        )
-        self.min_interval = 60 / max_hr
-        self.max_interval = 60 / min_hr
-        self.array = jnp.full(n_beats * n_subsample, fill_value=self.normalise(60 / guess_hr))
-        self.inds = jnp.arange(n_beats * n_subsample) / n_subsample
-        self.n_subsample = n_subsample
-
-    def beat_times(self):
-        intervals = (
-            jax.nn.sigmoid(self.array) * (self.max_interval - self.min_interval) + self.min_interval
+            hr=60.0,
         )
 
-        return jnp.cumsum(intervals / self.n_subsample) - self.max_interval
+        self.n_beats = n_beats
+        self.dynamic = False
+        self.min_interval = min_interval
+        self.max_interval = max_interval
+        self.offset = jnp.array(-max_interval)
+        self.e_sample = e_sample
+
+        e_inv = self.e_inv(e_sample)
+        s_sample = jnp.hstack(
+            [
+                0.0,
+                e_inv,
+                0.5,
+                1.0 - e_inv[::-1],
+                1.0,
+            ]
+        )
+        s_sample_full = jnp.arange(n_beats)[:, None] + s_sample[:-1]
+        s_sample_flat = s_sample_full.ravel()
+
+        ds_sample = jnp.diff(s_sample)
+        log_sample = jnp.log(ds_sample)
+        self.warp_array = jnp.tile(log_sample, [n_beats, 1])
+
+        self.inds = s_sample_flat
+        self.beat_array = self.normalise(jnp.full(n_beats, 60 / guess_hr))
+
+    def t_sample(self):
+        warp_array = jnp.hstack(
+            (jnp.zeros((self.n_beats, 1)), jnp.cumsum(jax.nn.softmax(self.warp_array), 1)[:, :-1])
+        )
+
+        beat_lengths = (
+            jax.nn.sigmoid(self.beat_array) * (self.max_interval - self.min_interval)
+            + self.min_interval
+        )
+
+        t_warped = warp_array.T * beat_lengths + jnp.append(0.0, jnp.cumsum(beat_lengths))[:-1]
+        t_flat = t_warped.T.ravel() + self.offset
+
+        return t_flat
 
     def normalise(self, interval):
         return jsp.logit((interval - self.min_interval) / (self.max_interval - self.min_interval))
 
     def f_interp(self, t):
-        return jnp.interp(t, self.beat_times(), self.inds)
+        return jnp.interp(t, self.t_sample(), self.inds)
 
     def __call__(self, t: jnp.ndarray, s: Optional[jnp.ndarray] = None) -> jnp.ndarray:
         interp_vmap = jax.vmap(
@@ -133,3 +171,6 @@ class LearnedHR(SimpleCardiacDriver):
         s_wrapped = jnp.remainder(s, 1)
         e_s = self.e(s_wrapped)
         return e_s
+
+    def e_inv(self, e_t):
+        return 0.5 - jnp.sqrt(-jnp.log(e_t) / self.b)

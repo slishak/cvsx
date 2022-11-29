@@ -13,8 +13,8 @@ from cvsx import cardiac_drivers as drv
 from cvsx.unit_conversions import convert
 
 
-@partial(jax.jit, static_argnums=0)
-def main(dynamic=False):
+# @partial(jax.jit, static_argnums=[0, 1])
+def main(dynamic=False, inertial=False):
 
     rtol = 1e-3
     atol = 1e-6
@@ -25,25 +25,41 @@ def main(dynamic=False):
     else:
         f_hr = 60.0
 
-    cvs = models.SmoothInertialSmithCVS(
-        parameter_source="revie",
+    if inertial:
+        model = models.SmoothInertialSmithCVS
+    else:
+        model = models.SmithCVS
+
+    cvs = model(
+        parameter_source="revie" if inertial else "smith",
         cd=drv.SimpleCardiacDriver(hr=f_hr),
         volume_ratios=True,
     )
     v_scale = cvs.v_tot if cvs.volume_ratios else 1.0
 
-    init_states = {
-        "v_lv": convert(94.6812, "ml") / v_scale,
-        "v_ao": convert(133.3381, "ml") / v_scale,
-        "v_vc": convert(329.7803, "ml") / v_scale,
-        "v_rv": convert(90.7302, "ml") / v_scale,
-        "v_pa": convert(43.0123, "ml") / v_scale,
-        "v_pu": convert(808.4579, "ml") / v_scale,
-        "q_mt": convert(245.5813, "ml/s"),
-        "q_av": convert(0.0, "ml/s"),
-        "q_tc": convert(190.0661, "ml/s"),
-        "q_pv": convert(0.0, "ml/s"),
-    }
+    if inertial:
+        init_states = {
+            "v_lv": convert(94.6812, "ml") / v_scale,
+            "v_ao": convert(133.3381, "ml") / v_scale,
+            "v_vc": convert(329.7803, "ml") / v_scale,
+            "v_rv": convert(90.7302, "ml") / v_scale,
+            "v_pa": convert(43.0123, "ml") / v_scale,
+            "v_pu": convert(808.4579, "ml") / v_scale,
+            "q_mt": convert(245.5813, "ml/s"),
+            "q_av": convert(0.0, "ml/s"),
+            "q_tc": convert(190.0661, "ml/s"),
+            "q_pv": convert(0.0, "ml/s"),
+        }
+    else:
+        init_states = {
+            "v_lv": convert(137.5, "ml") / v_scale,
+            "v_ao": convert(951.5, "ml") / v_scale,
+            "v_vc": convert(3190.0, "ml") / v_scale,
+            "v_rv": convert(132.0, "ml") / v_scale,
+            "v_pa": convert(187.0, "ml") / v_scale,
+            "v_pu": convert(902.0, "ml") / v_scale,
+        }
+
     if dynamic:
         init_states["s"] = 0.0
 
