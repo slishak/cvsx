@@ -1,5 +1,6 @@
 import time
 import functools as ft
+import traceback
 
 import jax
 import jax.tree_util as jtu
@@ -60,10 +61,10 @@ class TrainableODE(eqx.Module):
     model: models.SmithCVS
     y0: dict
 
-    def __call__(self, ts, atol=1e-7, rtol=1e-4):
+    def __call__(self, ts, atol=1e-6, rtol=1e-3):
         res = diffrax.diffeqsolve(
             diffrax.ODETerm(self.model),
-            diffrax.Tsit5(),
+            diffrax.Heun(),
             ts[0],
             ts[-1],
             2e-3,
@@ -78,6 +79,9 @@ class TrainableODE(eqx.Module):
             #     rtol=rtol,
             #     atol=atol,
             #     dtmax=1e-2,
+            #     pcoeff=0.4,
+            #     icoeff=0.3,
+            #     dcoeff=0,
             # ),
             max_steps=16**4,
             saveat=diffrax.SaveAt(ts=ts),
@@ -85,7 +89,7 @@ class TrainableODE(eqx.Module):
         return res.ys
 
     def outputs(self, ts, ys, atol=1e-6, rtol=1e-3):
-        out = self.model(
+        derivs, outputs = self.model(
             ts,
             ys,
             [
@@ -96,7 +100,7 @@ class TrainableODE(eqx.Module):
             ],
             True,
         )
-        return out
+        return derivs, outputs
 
 
 def plot_solution(ax, t, ys, model, outputs, color, alpha=1.0, t_ticks=True):
@@ -170,10 +174,10 @@ def main():
         e_sample=jnp.array([0.05, 0.5, 0.8, 0.95])
         # hr=hr,
     )
-    cvs = models.InertialSmithCVS(
-        # parameter_source="revie",
-        cd=cd,
-    )
+    if INERTIAL:
+        cvs = models.InertialSmithCVS(cd=cd)
+    else:
+        cvs = models.SmithCVS(cd=cd)
     if INERTIAL:
         y0 = {
             "v_lv": convert(94.6812, "ml"),
@@ -200,13 +204,7 @@ def main():
 
     model = TrainableODE(cvs, y0)
 
-    ys = model(data["t"])
-    out = model.outputs(data["t"], ys)
-
     fig, ax = plt.subplots(6, 2, sharex=True)
-    # ax[0].plot(data["t"], data["ECG lead I"], "k")
-    # ax[1].plot(data["t"], data["ECG lead II"], "k")
-    # ax[2].plot(data["t"], data["ECG lead V"], "k")
 
     ax[0, 0].plot(data["t"], data["ART"], "k")
     ax[1, 0].plot(data["t"], data["CVP"], "k")
@@ -215,22 +213,9 @@ def main():
     # ax[5, 0].plot(data["t"], data["ECG lead II"], ":k")
     # ax[5, 0].plot(data["t"], data["ECG lead V"], "--k")
 
-    outputs = model.outputs(data["t"], ys)
+    ys = model(data["t"])
+    deriv, outputs = model.outputs(data["t"], ys)
     plot_solution(ax, data["t"], ys, model, outputs, "b")
-
-    # ax[0, 0].plot(data["t"], out["p_ao"], "b")
-    # ax[1, 0].plot(data["t"], out["p_vc"], "b")
-    # ax[2, 0].plot(data["t"], out["p_pa"], "b")
-    # ax[3, 0].plot(data["t"], out["e_t"], "b")
-    # ax[3, 0].plot(model.model.cd.t_sample(), model.model.cd.inds * 0, "|b")
-
-    # ax[0, 1].plot(data["t"], ys["v_lv"], "b")
-    # ax[1, 1].plot(data["t"], ys["v_ao"], "b")
-    # ax[2, 1].plot(data["t"], ys["v_vc"], "b")
-    # ax[3, 1].plot(data["t"], ys["v_rv"], "b")
-    # ax[4, 1].plot(data["t"], ys["v_pa"], "b")
-    # ax[5, 1].plot(data["t"], ys["v_pu"], "b")
-    # ax[5, 0].plot(data["t"], sum(v for k, v in ys.items() if k[0] == "v"), "b")
 
     def parameter_filter(tree):
         nodes = [
@@ -285,8 +270,6 @@ def main():
                     tree.model.av._l,
                 ]
             )
-        # for layer in tree.model.cd.hr.mlp.layers:
-        #     nodes.extend([layer.weight, layer.bias])
         return nodes
 
     n_params = len(parameter_filter(model))
@@ -300,10 +283,8 @@ def main():
 
     @ft.partial(eqx.filter_value_and_grad, arg=filter_spec)
     def grad_loss(model, obs):
-        # ys = jax.vmap(model)(data["t"], y0)
-        # p_ao, p_vc, p_pa = jax.vmap(model.outputs)(data["t"], ys)
         ys = model(obs["t"])
-        out = model.outputs(obs["t"], ys)
+        deriv, out = model.outputs(obs["t"], ys)
         art_err = out["p_ao"] - obs["ART"]
         cvp_error = out["p_vc"] - obs["CVP"]
         pap_error = out["p_pa"] - obs["PAP"]
@@ -337,7 +318,7 @@ def main():
             # 300: 0.5,
         },
     )
-    n_epochs_sgd = 100
+    n_epochs_sgd = 300
 
     optim = optax.adabelief(lr)
     tree, static_tree = eqx.partition(model, filter_spec)
@@ -345,34 +326,22 @@ def main():
     model_list = []
     for i in range(n_epochs_sgd):
         start = time.perf_counter()
-        loss, new_model, opt_state, grad = make_step(model, data, opt_state)
-        end = time.perf_counter()
+        try:
+            loss, new_model, opt_state, grad = make_step(model, data, opt_state)
+        except ValueError as ex:
+            traceback.print_exc()
+            break
+        else:
+            end = time.perf_counter()
+            print(f"Step {i}: loss {loss}, time {end - start}")
+            if jnp.isnan(loss).any():
+                break
         model_list.append((loss, model))
         model = new_model
-        print(f"Step {i}: loss {loss}, time {end - start}")
         if i % 10 == 0:
-
             ys = model(data["t"])
-            outputs = model.outputs(data["t"], ys)
+            deriv, outputs = model.outputs(data["t"], ys)
             plot_solution(ax, data["t"], ys, model, outputs, "grey", alpha=0.5, t_ticks=False)
-            # out = model.outputs(data["t"], ys)
-            # ax[0, 0].plot(data["t"], out["p_ao"], "grey", alpha=0.5)
-            # ax[1, 0].plot(data["t"], out["p_vc"], "grey", alpha=0.5)
-            # ax[2, 0].plot(data["t"], out["p_pa"], "grey", alpha=0.5)
-            # ax[3, 0].plot(data["t"], out["e_t"], "grey", alpha=0.5)
-
-            # ax[0, 1].plot(data["t"], ys["v_lv"], "grey", alpha=0.5)
-            # ax[1, 1].plot(data["t"], ys["v_ao"], "grey", alpha=0.5)
-            # ax[2, 1].plot(data["t"], ys["v_vc"], "grey", alpha=0.5)
-            # ax[3, 1].plot(data["t"], ys["v_rv"], "grey", alpha=0.5)
-            # ax[4, 1].plot(data["t"], ys["v_pa"], "grey", alpha=0.5)
-            # ax[5, 1].plot(data["t"], ys["v_pu"], "grey", alpha=0.5)
-
-            # ax[5, 0].plot(
-            #     data["t"], sum(v for k, v in ys.items() if k[0] == "v"), "grey", alpha=0.5
-            # )
-        if jnp.isnan(loss).any():
-            break
 
     # solver = jaxopt.BFGS(
     #     lambda x: obj_bfgs(x, static_tree, data),
@@ -387,26 +356,10 @@ def main():
     # model = eqx.combine(res.params, static_tree)
 
     ys = model(data["t"])
-    outputs = model.outputs(data["t"], ys)
+    deriv, outputs = model.outputs(data["t"], ys)
     plot_solution(ax, data["t"], ys, model, outputs, "r")
     plot_lv_pressures(data["t"], outputs).write_html("lv.html", include_mathjax="cdn")
     plot_rv_pressures(data["t"], outputs).write_html("rv.html", include_mathjax="cdn")
-    # out = model.outputs(data["t"], ys)
-    # ax[0, 0].plot(data["t"], out["p_ao"], "r")
-    # ax[1, 0].plot(data["t"], out["p_vc"], "r")
-    # ax[2, 0].plot(data["t"], out["p_pa"], "r")
-    # ax[3, 0].plot(data["t"], out["e_t"], "r")
-    # ax[3, 0].plot(model.model.cd.t_sample(), model.model.cd.inds * 0, "|r")
-
-    # ax[0, 1].plot(data["t"], ys["v_lv"], "r")
-    # ax[1, 1].plot(data["t"], ys["v_ao"], "r")
-    # ax[2, 1].plot(data["t"], ys["v_vc"], "r")
-    # ax[3, 1].plot(data["t"], ys["v_rv"], "r")
-    # ax[4, 1].plot(data["t"], ys["v_pa"], "r")
-    # ax[5, 1].plot(data["t"], ys["v_pu"], "r")
-
-    # ax[5, 0].plot(data["t"], sum(v for k, v in ys.items() if k[0] == "v"), "r")
-    # ax[7].plot(data["t"], out["ds_dt"], "r")
 
     fig, ax = plt.subplots(6, 1, sharex=True)
     for key in y0:

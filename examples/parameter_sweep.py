@@ -1,5 +1,6 @@
 from time import perf_counter
 from functools import partial
+from typing import Optional
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +16,11 @@ from cvsx.unit_conversions import convert
 
 
 @partial(jax.jit, static_argnums=[0, 1, 2])
-def main(dynamic=False, inertial=False, jallon=True):
+def main(
+    dynamic=False,
+    inertial=False,
+    jallon=True,
+):
 
     rtol = 1e-4
     atol = 1e-7
@@ -100,6 +105,8 @@ def main(dynamic=False, inertial=False, jallon=True):
 
     # out_dbg = cvs(jnp.array(0.0), init_states, (nl_solver,))
 
+
+
     res = diffrax.diffeqsolve(
         term,
         ode_solver,
@@ -124,7 +131,6 @@ if __name__ == "__main__":
         print("Compile")
         t0 = perf_counter()
         main(jallon=False)
-        main(jallon=True)
         t1 = perf_counter()
         print(f"Compiled in {t1-t0:6f}s. Start timing")
 
@@ -133,12 +139,6 @@ if __name__ == "__main__":
             res1, deriv1, out1 = main(jallon=False)
             tb = perf_counter()
             print(f'{tb-ta:.6f}s, {res1.stats["num_steps"]} steps')
-
-        for i in range(4):
-            ta = perf_counter()
-            res2, deriv2, out2 = main(jallon=True)
-            tb = perf_counter()
-            print(f'Jallon: {tb-ta:.6f}s, {res2.stats["num_steps"]} steps')
 
     all_states = res1.ys.keys() | res2.ys.keys()
     fig, ax = plt.subplots(len(all_states), 2, sharex=True)

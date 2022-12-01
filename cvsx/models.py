@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from cvsx import components as c
 from cvsx import cardiac_drivers as drv
 from cvsx import parameters as p
+from cvsx import respiratory as resp
 
 
 class SmithCVS(eqx.Module):
@@ -30,21 +31,20 @@ class SmithCVS(eqx.Module):
     v_tot: float
     p_pl: float
     p_pl_affects_pu_and_pa: bool = True
-    volume_ratios: bool = False
-    smooth_valves: bool = True
+    p_pl_is_input: bool = False
 
     def __init__(
         self,
         parameter_source: str = "smith",
         p_pl_affects_pu_and_pa: bool = True,
-        volume_ratios: bool = False,
+        p_pl_is_input: bool = False,
         cd: Optional[drv.CardiacDriverBase] = None,
     ):
         params = p.cvs_parameters[parameter_source]
         self.parameterise(params, cd=cd)
 
         self.p_pl_affects_pu_and_pa = p_pl_affects_pu_and_pa
-        self.volume_ratios = volume_ratios
+        self.p_pl_is_input = p_pl_is_input
 
     def parameterise(self, params: dict, cd: Optional[drv.CardiacDriverBase] = None):
         if cd is None:
@@ -68,48 +68,43 @@ class SmithCVS(eqx.Module):
         self,
         t: jnp.ndarray,
         states: dict,
-        args: tuple[diffrax.AbstractNonlinearSolver],
-        all_outputs=False,
+        args: (
+            tuple[diffrax.AbstractNonlinearSolver]
+            | tuple[diffrax.AbstractNonlinearSolver, jnp.ndarray]
+        ),
+        return_outputs: bool = False,
     ) -> dict:
 
         solver = args[0]
+        if self.p_pl_is_input:
+            p_pl = args[1]
+        else:
+            p_pl = self.p_pl
 
         if self.cd.dynamic:
             e_t, ds_dt = self.cd(t, states["s"])
         else:
             e_t = self.cd(t)
 
-        if self.volume_ratios:
-            states = {
-                key: val * self.v_tot if key.startswith("v_") else val
-                for key, val in states.items()
-            }
-
-        p_v = self.pressures_volumes(e_t, states, solver)
+        p_v = self.pressures_volumes(e_t, states, solver, p_pl)
         flow_rates = self.flow_rates(states, p_v)
         derivatives = self.derivatives(flow_rates, p_v)
 
         if self.cd.dynamic:
             derivatives["s"] = ds_dt
 
-        if self.volume_ratios:
-            derivatives = {
-                key: val / self.v_tot if key.startswith("v_") else val
-                for key, val in derivatives.items()
-            }
-
         # jax.debug.print("{t}", t=t)
         # jax.debug.print("{t}\n{states}\n{derivatives}", t=t, states=states, derivatives=derivatives)
 
-        if all_outputs:
-            out = p_v | flow_rates
-            out.update({f"d{key}_dt": val for key, val in derivatives.items()})
-            out["e_t"] = e_t
-            return out
+        if not return_outputs:
+            return derivatives
 
-        return derivatives
+        outputs = p_v | flow_rates
+        outputs["e_t"] = e_t
+        return derivatives, outputs
 
-    def pressures_volumes(self, e_t, states, solver):
+    def pressures_volumes(self, e_t, states, solver, p_pl):
+
         v_spt = self.solve_v_spt(states["v_lv"], states["v_rv"], e_t, solver)
 
         v_lvf = states["v_lv"] - v_spt
@@ -119,7 +114,7 @@ class SmithCVS(eqx.Module):
 
         v_pcd = states["v_lv"] + states["v_rv"]
         p_pcd = self.pcd.p_ed(v_pcd)
-        p_peri = p_pcd + self.p_pl
+        p_peri = p_pcd + p_pl
 
         p_lv = p_lvf + p_peri
         p_rv = p_rvf + p_peri
@@ -130,8 +125,8 @@ class SmithCVS(eqx.Module):
         p_vc = self.vc.p_es(states["v_vc"])
 
         if self.p_pl_affects_pu_and_pa:
-            p_pa = p_pa + self.p_pl
-            p_pu = p_pu + self.p_pl
+            p_pa = p_pa + p_pl
+            p_pu = p_pu + p_pl
 
         p_v = {
             "v_pcd": v_pcd,
@@ -245,3 +240,43 @@ class SmoothInertialSmithCVS(InertialSmithCVS):
             "q_pul": self.pul.flow_rate(p_v["p_pa"], p_v["p_pu"]),
             "q_sys": self.sys.flow_rate(p_v["p_ao"], p_v["p_vc"]),
         }
+
+
+class JallonHeartLungs(eqx.Module):
+    cvs: SmithCVS
+    resp_sys: resp.PassiveRespiratorySystem
+    resp_pattern: resp.RespiratoryPatternGenerator
+
+    def __call__(
+        self,
+        t: jnp.ndarray,
+        states: dict,
+        args: tuple[diffrax.AbstractNonlinearSolver],
+        return_outputs: bool = False,
+    ) -> dict:
+        solver = args[0]
+        resp_deriv, resp_outputs = self.resp_sys(
+            t,
+            states,
+            return_outputs=True,
+        )
+        cvs_deriv, cvs_outputs = self.cvs(
+            t,
+            states,
+            (solver, resp_outputs["p_pl"]),
+            return_outputs=True,
+        )
+        resp_pattern_derivs = self.resp_pattern(
+            t,
+            states,
+            (resp_deriv["v_alv"],),
+        )
+
+        all_derivs = resp_deriv | cvs_deriv | resp_pattern_derivs
+
+        if not return_outputs:
+            return all_derivs
+
+        all_outputs = resp_outputs | cvs_outputs
+
+        return all_derivs, all_outputs
