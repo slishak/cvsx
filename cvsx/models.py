@@ -117,43 +117,39 @@ class SmithCVS(eqx.Module):
 
         return p_v
 
+    @staticmethod
+    def _valve_flow_rate(
+        t: jnp.ndarray,
+        states: dict,
+        p_v: dict,
+        valve: c.Valve,
+        name: str,
+        p_upstream: str,
+        p_downstream: str,
+    ) -> jnp.ndarray:
+        if valve.inertial:
+            if valve.allow_reverse_flow:
+                return states[name]
+            else:
+                return jnp.maximum(states[name], 0.0)
+        else:
+            return valve.flow_rate(t, p_v[p_upstream], p_v[p_downstream])
+
     def flow_rates(self, t: jnp.ndarray, states: dict, p_v: dict) -> dict:
         flow_rates = {
             "q_pul": self.pul.flow_rate(t, p_v["p_pa"], p_v["p_pu"]),
             "q_sys": self.sys.flow_rate(t, p_v["p_ao"], p_v["p_vc"]),
         }
 
-        if self.mt.inertial:
-            if self.mt.allow_reverse_flow:
-                flow_rates["q_mt"] = states["q_mt"]
-            else:
-                flow_rates["q_mt"] = jnp.maximum(states["q_mt"], 0.0)
-        else:
-            flow_rates["q_mt"] = self.mt.flow_rate(t, p_v["p_pu"], p_v["p_lv"])
-
-        if self.av.inertial:
-            if self.av.allow_reverse_flow:
-                flow_rates["q_av"] = states["q_av"]
-            else:
-                flow_rates["q_av"] = jnp.maximum(states["q_av"], 0.0)
-        else:
-            flow_rates["q_av"] = self.av.flow_rate(t, p_v["p_lv"], p_v["p_ao"])
-
-        if self.tc.inertial:
-            if self.tc.allow_reverse_flow:
-                flow_rates["q_tc"] = states["q_tc"]
-            else:
-                flow_rates["q_tc"] = jnp.maximum(states["q_tc"], 0.0)
-        else:
-            flow_rates["q_tc"] = self.tc.flow_rate(t, p_v["p_vc"], p_v["p_rv"])
-
-        if self.pv.inertial:
-            if self.pv.allow_reverse_flow:
-                flow_rates["q_pv"] = states["q_pv"]
-            else:
-                flow_rates["q_pv"] = jnp.maximum(states["q_pv"], 0.0)
-        else:
-            flow_rates["q_pv"] = self.pv.flow_rate(t, p_v["p_rv"], p_v["p_pa"])
+        for valve, name, p_upstream, p_downstream in [
+            (self.mt, "q_mt", "p_pu", "p_lv"),
+            (self.av, "q_av", "p_lv", "p_ao"),
+            (self.tc, "q_tc", "p_vc", "p_rv"),
+            (self.pv, "q_pv", "p_rv", "p_pa"),
+        ]:
+            flow_rates[name] = self._valve_flow_rate(
+                t, states, p_v, valve, name, p_upstream, p_downstream
+            )
 
         return flow_rates
 
