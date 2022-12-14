@@ -163,21 +163,15 @@ class SmithCVS(eqx.Module):
             "v_rv": flow_rates["q_tc"] - flow_rates["q_pv"],
         }
 
-        if self.mt.inertial:
-            derivatives["q_mt"] = self.mt.flow_rate_deriv(
-                t, p_v["p_pu"], p_v["p_lv"], flow_rates["q_mt"]
-            )
-        if self.av.inertial:
-            derivatives["q_av"] = self.av.flow_rate_deriv(
-                t, p_v["p_lv"], p_v["p_ao"], flow_rates["q_av"]
-            )
-        if self.tc.inertial:
-            derivatives["q_tc"] = self.tc.flow_rate_deriv(
-                t, p_v["p_vc"], p_v["p_rv"], flow_rates["q_tc"]
-            )
-        if self.pv.inertial:
-            derivatives["q_pv"] = self.pv.flow_rate_deriv(
-                t, p_v["p_rv"], p_v["p_pa"], flow_rates["q_pv"]
+        for valve, name, p_upstream, p_downstream in [
+            (self.mt, "q_mt", "p_pu", "p_lv"),
+            (self.av, "q_av", "p_lv", "p_ao"),
+            (self.tc, "q_tc", "p_vc", "p_rv"),
+            (self.pv, "q_pv", "p_rv", "p_pa"),
+        ]:
+            if valve.inertial:
+                derivatives[name] = valve.flow_rate_deriv(
+                    t, p_v[p_upstream], p_v[p_downstream], flow_rates[name]
             )
 
         return derivatives
