@@ -8,7 +8,8 @@ import jax.numpy as jnp
 
 from cvsx import components as c
 from cvsx import cardiac_drivers as drv
-from cvsx import parameters as p
+
+# from cvsx import parameters as p
 from cvsx import respiratory as resp
 
 
@@ -28,41 +29,10 @@ class SmithCVS(eqx.Module):
     pu: c.PressureVolume
     ao: c.PressureVolume
     cd: drv.CardiacDriverBase
-    v_tot: float
     p_pl: float
     p_pl_affects_pu_and_pa: bool = True
     p_pl_is_input: bool = False
-
-    def __init__(
-        self,
-        parameter_source: str = "smith",
-        p_pl_affects_pu_and_pa: bool = True,
-        p_pl_is_input: bool = False,
-        cd: Optional[drv.CardiacDriverBase] = None,
-    ):
-        params = p.cvs_parameters[parameter_source]
-        self.parameterise(params, cd=cd)
-
-        self.p_pl_affects_pu_and_pa = p_pl_affects_pu_and_pa
-        self.p_pl_is_input = p_pl_is_input
-
-    def parameterise(self, params: dict, cd: Optional[drv.CardiacDriverBase] = None):
-        if cd is None:
-            cd = drv.SimpleCardiacDriver()
-        for field in fields(self):
-            if field.name == "cd":
-                self.cd = cd
-                continue
-
-            try:
-                field_params = params[field.name]
-            except KeyError:
-                continue
-
-            if isinstance(field_params, dict):
-                setattr(self, field.name, field.type(**field_params))
-            else:
-                setattr(self, field.name, field.type(field_params))
+    v_spt_method: str = "solver"
 
     def __call__(
         self,
@@ -86,9 +56,9 @@ class SmithCVS(eqx.Module):
         else:
             e_t = self.cd(t)
 
-        p_v = self.pressures_volumes(e_t, states, solver, p_pl)
-        flow_rates = self.flow_rates(states, p_v)
-        derivatives = self.derivatives(flow_rates, p_v)
+        p_v = self.pressures_volumes(t, e_t, states, solver, p_pl)
+        flow_rates = self.flow_rates(t, states, p_v)
+        derivatives = self.derivatives(t, flow_rates, p_v)
 
         if self.cd.dynamic:
             derivatives["s"] = ds_dt
@@ -103,26 +73,26 @@ class SmithCVS(eqx.Module):
         outputs["e_t"] = e_t
         return derivatives, outputs
 
-    def pressures_volumes(self, e_t, states, solver, p_pl):
+    def pressures_volumes(self, t, e_t, states, solver, p_pl):
 
-        v_spt = self.solve_v_spt(states["v_lv"], states["v_rv"], e_t, solver)
+        v_spt = self.solve_v_spt(t, states["v_lv"], states["v_rv"], e_t, solver)
 
         v_lvf = states["v_lv"] - v_spt
         v_rvf = states["v_rv"] + v_spt
-        p_lvf = self.lvf.p(v_lvf, e_t)
-        p_rvf = self.rvf.p(v_rvf, e_t)
+        p_lvf = self.lvf.p(t, v_lvf, e_t)
+        p_rvf = self.rvf.p(t, v_rvf, e_t)
 
         v_pcd = states["v_lv"] + states["v_rv"]
-        p_pcd = self.pcd.p_ed(v_pcd)
+        p_pcd = self.pcd.p_ed(t, v_pcd)
         p_peri = p_pcd + p_pl
 
         p_lv = p_lvf + p_peri
         p_rv = p_rvf + p_peri
 
-        p_pa = self.pa.p_es(states["v_pa"])
-        p_pu = self.pu.p_es(states["v_pu"])
-        p_ao = self.ao.p_es(states["v_ao"])
-        p_vc = self.vc.p_es(states["v_vc"])
+        p_pa = self.pa.p_es(t, states["v_pa"])
+        p_pu = self.pu.p_es(t, states["v_pu"])
+        p_ao = self.ao.p_es(t, states["v_ao"])
+        p_vc = self.vc.p_es(t, states["v_vc"])
 
         if self.p_pl_affects_pu_and_pa:
             p_pa = p_pa + p_pl
@@ -147,17 +117,47 @@ class SmithCVS(eqx.Module):
 
         return p_v
 
-    def flow_rates(self, states: dict, p_v: dict) -> dict:
-        return {
-            "q_mt": self.mt.flow_rate(p_v["p_pu"], p_v["p_lv"]),
-            "q_av": self.av.flow_rate(p_v["p_lv"], p_v["p_ao"]),
-            "q_tc": self.tc.flow_rate(p_v["p_vc"], p_v["p_rv"]),
-            "q_pv": self.pv.flow_rate(p_v["p_rv"], p_v["p_pa"]),
-            "q_pul": self.pul.flow_rate(p_v["p_pa"], p_v["p_pu"]),
-            "q_sys": self.sys.flow_rate(p_v["p_ao"], p_v["p_vc"]),
+    def flow_rates(self, t: jnp.ndarray, states: dict, p_v: dict) -> dict:
+        flow_rates = {
+            "q_pul": self.pul.flow_rate(t, p_v["p_pa"], p_v["p_pu"]),
+            "q_sys": self.sys.flow_rate(t, p_v["p_ao"], p_v["p_vc"]),
         }
 
-    def derivatives(self, flow_rates: dict, p_v: dict) -> dict:
+        if self.mt.inertial:
+            if self.mt.allow_reverse_flow:
+                flow_rates["q_mt"] = states["q_mt"]
+            else:
+                flow_rates["q_mt"] = jnp.maximum(states["q_mt"], 0.0)
+        else:
+            flow_rates["q_mt"] = self.mt.flow_rate(t, p_v["p_pu"], p_v["p_lv"])
+
+        if self.av.inertial:
+            if self.av.allow_reverse_flow:
+                flow_rates["q_av"] = states["q_av"]
+            else:
+                flow_rates["q_av"] = jnp.maximum(states["q_av"], 0.0)
+        else:
+            flow_rates["q_av"] = self.av.flow_rate(t, p_v["p_lv"], p_v["p_ao"])
+
+        if self.tc.inertial:
+            if self.tc.allow_reverse_flow:
+                flow_rates["q_tc"] = states["q_tc"]
+            else:
+                flow_rates["q_tc"] = jnp.maximum(states["q_tc"], 0.0)
+        else:
+            flow_rates["q_tc"] = self.tc.flow_rate(t, p_v["p_vc"], p_v["p_rv"])
+
+        if self.pv.inertial:
+            if self.pv.allow_reverse_flow:
+                flow_rates["q_pv"] = states["q_pv"]
+            else:
+                flow_rates["q_pv"] = jnp.maximum(states["q_pv"], 0.0)
+        else:
+            flow_rates["q_pv"] = self.pv.flow_rate(t, p_v["p_rv"], p_v["p_pa"])
+
+        return flow_rates
+
+    def derivatives(self, t: jnp.ndarray, flow_rates: dict, p_v: dict) -> dict:
         derivatives = {
             "v_pa": flow_rates["q_pv"] - flow_rates["q_pul"],
             "v_pu": flow_rates["q_pul"] - flow_rates["q_mt"],
@@ -167,19 +167,64 @@ class SmithCVS(eqx.Module):
             "v_rv": flow_rates["q_tc"] - flow_rates["q_pv"],
         }
 
+        if self.mt.inertial:
+            derivatives["q_mt"] = self.mt.flow_rate_deriv(
+                t, p_v["p_pu"], p_v["p_lv"], flow_rates["q_mt"]
+            )
+        if self.av.inertial:
+            derivatives["q_av"] = self.av.flow_rate_deriv(
+                t, p_v["p_lv"], p_v["p_ao"], flow_rates["q_av"]
+            )
+        if self.tc.inertial:
+            derivatives["q_tc"] = self.tc.flow_rate_deriv(
+                t, p_v["p_vc"], p_v["p_rv"], flow_rates["q_tc"]
+            )
+        if self.pv.inertial:
+            derivatives["q_pv"] = self.pv.flow_rate_deriv(
+                t, p_v["p_rv"], p_v["p_pa"], flow_rates["q_pv"]
+            )
+
         return derivatives
 
-    def solve_v_spt(self, v_lv, v_rv, e_t, solver):
-        sol = lambda v_lv_i, v_rv_i, e_t_i: solver(
-            self.v_spt_residual, 0.0, (v_lv_i, v_rv_i, e_t_i)
-        ).root
-        sol_v = jax.vmap(sol, (0, 0, 0), 0)
-        v_lv_1d = jnp.atleast_1d(v_lv)
-        v_rv_1d = jnp.atleast_1d(v_rv)
-        e_t_1d = jnp.atleast_1d(e_t)
-        v_spt = sol_v(v_lv_1d, v_rv_1d, e_t_1d)
+    def solve_v_spt(self, t, v_lv, v_rv, e_t, solver):
+        if self.v_spt_method == "solver":
 
-        v_spt = jnp.reshape(v_spt, v_lv.shape)
+            def func(v_lv_i, v_rv_i, t_i, e_t_i):
+                solution = solver(self.v_spt_residual, 0.0, (v_lv_i, v_rv_i, t_i, e_t_i))
+                root = jnp.where(solution.result == 0, solution.root, jnp.nan)
+                return root
+
+            sol_v = jax.vmap(func, (0, 0, 0, 0), 0)
+            v_lv_1d = jnp.atleast_1d(v_lv)
+            v_rv_1d = jnp.atleast_1d(v_rv)
+            t_1d = jnp.atleast_1d(t)
+            e_t_1d = jnp.atleast_1d(e_t)
+            v_spt = sol_v(v_lv_1d, v_rv_1d, t_1d, e_t_1d)
+
+            v_spt = jnp.reshape(v_spt, v_lv.shape)
+        elif self.v_spt_method == "jallon":
+            # Linearisation from Jallon 2009
+            # fmt: off
+            num = e_t * (
+                self.lvf.p_es(v_lv) - self.rvf.p_es(v_rv) + self.spt.e * self.spt.v_d
+            ) + (1 - e_t) * (
+                self.lvf.p_ed_linear(v_lv)
+                - self.rvf.p_ed_linear(v_rv)
+                + self.spt.lam * self.spt.p_0 * self.spt.v_0
+            )
+            den = e_t * (
+                self.lvf.e + self.rvf.e + self.spt.e
+            ) + (1 - e_t) * (
+                self.lvf.lam * self.lvf.p_0
+                + self.rvf.lam * self.rvf.p_0
+                + self.spt.lam * self.spt.p_0
+            )
+            # fmt: on
+            v_spt = num / den
+        elif self.v_spt_method == "off":
+            v_spt = jnp.zeros_like(v_lv)
+        else:
+            raise NotImplementedError(self.v_spt_method)
 
         return v_spt
 
@@ -187,59 +232,13 @@ class SmithCVS(eqx.Module):
         # return solution.root
 
     def v_spt_residual(self, v_spt, args):
-        v_lv, v_rv, e_t = args
+        v_lv, v_rv, t, e_t = args
         v_lvf = v_lv - v_spt
         v_rvf = v_rv + v_spt
 
-        res = self.spt.p(v_spt, e_t) - self.lvf.p(v_lvf, e_t) + self.rvf.p(v_rvf, e_t)
+        res = self.spt.p(t, v_spt, e_t) - self.lvf.p(t, v_lvf, e_t) + self.rvf.p(t, v_rvf, e_t)
 
         return res
-
-
-class InertialSmithCVS(SmithCVS):
-    mt: c.InertialValve
-    tc: c.InertialValve
-    av: c.InertialValve
-    pv: c.InertialValve
-
-    def __init__(self, parameter_source: str = "revie", *args, **kwargs):
-        super().__init__(parameter_source, *args, **kwargs)
-
-    def derivatives(self, flow_rates: dict, p_v: dict) -> dict:
-        derivatives = super().derivatives(flow_rates, p_v)
-        derivatives["q_mt"] = self.mt.flow_rate_deriv(p_v["p_pu"], p_v["p_lv"], flow_rates["q_mt"])
-        derivatives["q_av"] = self.av.flow_rate_deriv(p_v["p_lv"], p_v["p_ao"], flow_rates["q_av"])
-        derivatives["q_tc"] = self.tc.flow_rate_deriv(p_v["p_vc"], p_v["p_rv"], flow_rates["q_tc"])
-        derivatives["q_pv"] = self.pv.flow_rate_deriv(p_v["p_rv"], p_v["p_pa"], flow_rates["q_pv"])
-
-        return derivatives
-
-    def flow_rates(self, states: dict, p_v: dict) -> dict:
-        return {
-            "q_mt": jnp.maximum(states["q_mt"], 0.0),
-            "q_av": jnp.maximum(states["q_av"], 0.0),
-            "q_tc": jnp.maximum(states["q_tc"], 0.0),
-            "q_pv": jnp.maximum(states["q_pv"], 0.0),
-            "q_pul": self.pul.flow_rate(p_v["p_pa"], p_v["p_pu"]),
-            "q_sys": self.sys.flow_rate(p_v["p_ao"], p_v["p_vc"]),
-        }
-
-
-class SmoothInertialSmithCVS(InertialSmithCVS):
-    mt: c.SmoothInertialValve
-    tc: c.SmoothInertialValve
-    av: c.SmoothInertialValve
-    pv: c.SmoothInertialValve
-
-    def flow_rates(self, states: dict, p_v: dict) -> dict:
-        return {
-            "q_mt": states["q_mt"],
-            "q_av": states["q_av"],
-            "q_tc": states["q_tc"],
-            "q_pv": states["q_pv"],
-            "q_pul": self.pul.flow_rate(p_v["p_pa"], p_v["p_pu"]),
-            "q_sys": self.sys.flow_rate(p_v["p_ao"], p_v["p_vc"]),
-        }
 
 
 class JallonHeartLungs(eqx.Module):

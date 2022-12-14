@@ -1,4 +1,4 @@
-from dataclasses import InitVar, field
+from typing import ClassVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -33,113 +33,166 @@ class PressureVolume(eqx.Module):
     def lam(self):
         return self._lam**2 * self._lam_scale
 
-    def p(self, v: jnp.ndarray, e_t: jnp.ndarray) -> jnp.ndarray:
-        p_es = self.p_es(v)
-        p_ed = self.p_ed(v)
+    def p(self, t: jnp.ndarray, v: jnp.ndarray, e_t: jnp.ndarray) -> jnp.ndarray:
+        p_es = self.p_es(t, v)
+        p_ed = self.p_ed(t, v)
         return e_t * p_es + (1 - e_t) * p_ed
 
-    def p_es(self, v: jnp.ndarray) -> jnp.ndarray:
+    def p_es(self, t: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
         return self.e * (v - self.v_d)
 
-    def p_ed(self, v: jnp.ndarray) -> jnp.ndarray:
+    def p_ed(self, t: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
         return self.p_0 * (jnp.exp(self.lam * (v - self.v_0)) - 1)
 
-    def p_ed_linear(self, v: jnp.ndarray) -> jnp.ndarray:
+    def p_ed_linear(self, t: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
         return self.p_0 * self.lam * (v - self.v_0)
 
 
 class BloodVessel(eqx.Module):
     _r: float
+    _l: float
+    inertial: bool
 
-    def __init__(self, r):
+    def __init__(self, r, l=0.0, inertial=False):
         self._r = jnp.sqrt(r)
+        self._l = jnp.sqrt(l)
+        self.inertial = inertial
 
     @property
     def r(self):
         return self._r**2
 
-    def flow_rate(self, p_upstream: jnp.ndarray, p_downstream: jnp.ndarray) -> jnp.ndarray:
-        q_flow = (p_upstream - p_downstream) / self.r
-        return q_flow
-
-
-class Valve(BloodVessel):
-    def open(
-        self,
-        p_upstream: jnp.ndarray,
-        p_downstream: jnp.ndarray,
-        q_flow: jnp.ndarray,
-    ) -> jnp.ndarray:
-        return p_upstream > p_downstream
-
-    def flow_rate(self, p_upstream: jnp.ndarray, p_downstream: jnp.ndarray) -> jnp.ndarray:
-        q_flow = super().flow_rate(p_upstream, p_downstream)
-        return jnp.where(self.open(p_upstream, p_downstream, q_flow), q_flow, 0.0)
-
-
-class InertialValve(Valve):
-    _l: float
-
-    def __init__(self, r, l):
-        super().__init__(r)
-        self._l = jnp.sqrt(l)
-
     @property
     def l(self):
         return self._l**2
 
+    def flow_rate(
+        self,
+        t: jnp.ndarray,
+        p_upstream: jnp.ndarray,
+        p_downstream: jnp.ndarray,
+    ) -> jnp.ndarray:
+        q_flow = (p_upstream - p_downstream) / self.r
+        return q_flow
+
+    def flow_rate_deriv(
+        self,
+        t: jnp.ndarray,
+        p_upstream: jnp.ndarray,
+        p_downstream: jnp.ndarray,
+        q_flow: jnp.ndarray,
+    ) -> jnp.ndarray:
+        if not self.inertial:
+            raise RuntimeError("Inertial valve has no flow_rate_deriv method")
+        dq_dt = (p_upstream - p_downstream - q_flow * self.r) / self.l
+        return dq_dt
+
+
+class Valve(BloodVessel):
+    allow_reverse_flow: bool = False
+
     def open(
         self,
         p_upstream: jnp.ndarray,
         p_downstream: jnp.ndarray,
         q_flow: jnp.ndarray,
     ) -> jnp.ndarray:
-        return jnp.logical_or(p_upstream > p_downstream, q_flow > 0.0)
+        if self.inertial:
+            return jnp.logical_or(p_upstream > p_downstream, q_flow > 0.0)
+        else:
+            return p_upstream > p_downstream
+
+    def flow_rate(
+        self,
+        t: jnp.ndarray,
+        p_upstream: jnp.ndarray,
+        p_downstream: jnp.ndarray,
+    ) -> jnp.ndarray:
+        q_flow = super().flow_rate(t, p_upstream, p_downstream)
+
+        # Regardless of inertial valve or not, ignore inertia and consider steady state
+        valve_open = p_upstream > p_downstream
+
+        return jnp.where(valve_open, q_flow, 0.0)
 
     def flow_rate_deriv(
+        self,
+        t: jnp.ndarray,
+        p_upstream: jnp.ndarray,
+        p_downstream: jnp.ndarray,
+        q_flow: jnp.ndarray,
+    ) -> jnp.ndarray:
+        dq_dt = super().flow_rate_deriv(t, p_upstream, p_downstream, q_flow)
+        valve_open = self.open(p_upstream, p_downstream, q_flow)
+        return jnp.where(valve_open, dq_dt, 0.0)
+
+
+class TwoWayValve(Valve):
+    allow_reverse_flow: bool = True
+    r_reverse: float = convert(10, "mmHg/ml")
+
+    def open(
         self,
         p_upstream: jnp.ndarray,
         p_downstream: jnp.ndarray,
         q_flow: jnp.ndarray,
     ) -> jnp.ndarray:
-        dq_dt = (p_upstream - p_downstream - q_flow * self.r) / self.l
-        return jnp.where(self.open(p_upstream, p_downstream, q_flow), dq_dt, 0.0)
+        if self.inertial:
+            return q_flow > 0.0
+        else:
+            return p_upstream > p_downstream
 
-
-class RestoringInertialValve(InertialValve):
-    slope: float
-
-    def __init__(self, r, l, slope=100000.0):
-        super().__init__(r, l)
-        self.slope = slope
-
-    def flow_rate_deriv(
+    def flow_rate_reversed(
         self,
+        t: jnp.ndarray,
+        p_upstream: jnp.ndarray,
+        p_downstream: jnp.ndarray,
+    ) -> jnp.ndarray:
+        return (p_upstream - p_downstream) / self.r_reverse
+
+    def flow_rate_deriv_reversed(
+        self,
+        t: jnp.ndarray,
         p_upstream: jnp.ndarray,
         p_downstream: jnp.ndarray,
         q_flow: jnp.ndarray,
     ) -> jnp.ndarray:
-        dq_dt = (p_upstream - p_downstream - q_flow * self.r) / self.l
-        return jnp.where(self.open(p_upstream, p_downstream, q_flow), dq_dt, -self.slope * q_flow)
+        return (p_upstream - p_downstream - q_flow * self.r_reverse) / self.l
 
-
-class SmoothInertialValve(InertialValve):
-    q_threshold_slope: float
-    q_threshold_min: float
-
-    def __init__(
+    def flow_rate(
         self,
-        r,
-        l,
-        q_threshold_slope: float = convert(10.0, "ml/s"),
-        q_threshold_min: float = convert(10.0, "ml/s"),
-    ):
-        super().__init__(r, l)
-        self.q_threshold_slope = q_threshold_slope
-        self.q_threshold_min = q_threshold_min
+        t: jnp.ndarray,
+        p_upstream: jnp.ndarray,
+        p_downstream: jnp.ndarray,
+    ) -> jnp.ndarray:
+        q_flow = super().flow_rate(t, p_upstream, p_downstream)
+        q_flow_rev = self.flow_rate_reversed(t, p_upstream, p_downstream)
+
+        # Regardless of inertial valve or not, ignore inertia and consider steady state
+        valve_open = p_upstream > p_downstream
+
+        return jnp.where(valve_open, q_flow, q_flow_rev)
 
     def flow_rate_deriv(
         self,
+        t: jnp.ndarray,
+        p_upstream: jnp.ndarray,
+        p_downstream: jnp.ndarray,
+        q_flow: jnp.ndarray,
+    ) -> jnp.ndarray:
+        dq_dt_fwd = super().flow_rate_deriv(t, p_upstream, p_downstream, q_flow)
+        dq_dt_rev = self.flow_rate_deriv_reversed(t, p_upstream, p_downstream, q_flow)
+        # return jnp.maximum(dq_dt_fwd, dq_dt_rev)
+        return jnp.where(self.open(p_upstream, p_downstream, q_flow), dq_dt_fwd, dq_dt_rev)
+
+
+class SmoothValve(TwoWayValve):
+    q_threshold_slope: float = convert(10.0, "ml/s")
+    q_threshold_min: float = convert(10.0, "ml/s")
+
+    def flow_rate_deriv(
+        self,
+        t: jnp.ndarray,
         p_upstream: jnp.ndarray,
         p_downstream: jnp.ndarray,
         q_flow: jnp.ndarray,

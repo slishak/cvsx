@@ -1,6 +1,10 @@
+from typing import Type, Optional
+
 import jax.numpy as jnp
 
 from cvsx.unit_conversions import convert
+from cvsx import cardiac_drivers as drv
+from cvsx import components as c
 
 
 smith_2007 = {
@@ -85,7 +89,7 @@ smith_2007 = {
         "hr": jnp.array(80.0),
     },
     "p_pl": jnp.array(convert(-4.0, "mmHg")),
-    "v_tot": jnp.array(convert(5.5, "l")),
+    # "v_tot": jnp.array(convert(5.5, "l")),
 }
 
 jallon_2009 = {
@@ -170,7 +174,7 @@ jallon_2009 = {
         "hr": jnp.array(54.0),  # Modified
     },
     "p_pl": jnp.array(convert(-4.0, "mmHg")),
-    "v_tot": jnp.array(convert(5.5, "l")),
+    # "v_tot": jnp.array(convert(5.5, "l")),
 }
 
 revie_2012 = {
@@ -252,8 +256,14 @@ revie_2012 = {
         "lam": 0.0,
         "p_0": 0.0,
     },
+    "cd": {
+        "a": jnp.array([1.0]),
+        "b": jnp.array([80.0]),
+        "c": jnp.array([0.375]),
+        "hr": jnp.array(80.0),
+    },
     "p_pl": jnp.array(convert(-4.0, "mmHg")),
-    "v_tot": jnp.array(convert(1.5, "l")),  # Only simulates stressed volume?
+    # "v_tot": jnp.array(convert(1.5, "l")),  # Only simulates stressed volume?
 }
 
 
@@ -278,7 +288,31 @@ cd_chung = {
 }
 
 
-cd_parameters = {
-    "smith": cd_smith,
-    "chung": cd_chung,
-}
+def build_parameter_tree(
+    source: str,
+    inertial: bool = False,
+    cd: Optional[str | drv.CardiacDriverBase] = None,
+    valve_class: Type[c.Valve] | dict[str, Type[c.Valve]] = c.Valve,
+) -> dict:
+    parameters = {}
+    for valve in ("mt", "av", "tc", "pv"):
+        try:
+            cls = valve_class[valve]
+        except TypeError:
+            cls = valve_class
+        parameters[valve] = cls(**cvs_parameters[source][valve], inertial=inertial)
+
+    for vessel in ("pul", "sys"):
+        parameters[vessel] = c.BloodVessel(**cvs_parameters[source][vessel])
+
+    for pv in ("lvf", "rvf", "spt", "pcd", "vc", "pa", "pu", "ao"):
+        parameters[pv] = c.PressureVolume(**cvs_parameters[source][pv])
+
+    if cd is None:
+        parameters["cd"] = drv.GaussianCardiacDriver(**cvs_parameters[source]["cd"])
+    else:
+        parameters["cd"] = cd
+
+    parameters["p_pl"] = cvs_parameters[source]["p_pl"]
+
+    return parameters

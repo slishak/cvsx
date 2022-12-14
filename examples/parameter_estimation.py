@@ -19,6 +19,7 @@ jax.config.update("jax_platform_name", "cpu")
 from cvsx import models
 from cvsx import cardiac_drivers as drv
 from cvsx.unit_conversions import convert
+import plots
 
 
 INERTIAL = False
@@ -120,49 +121,6 @@ def plot_solution(ax, t, ys, model, outputs, color, alpha=1.0, t_ticks=True):
     ax[5, 0].plot(t, sum(v for k, v in ys.items() if k[0] == "v"), color=color, alpha=alpha)
 
 
-def latex(s):
-    return rf"$\Large{{{s}}}$"
-
-
-def plot_lv_pressures(t, outputs):
-    fig = make_subplots(2, 1, shared_xaxes="all")
-    fig.update_layout(hovermode="x")
-    fig.update_yaxes(row=1, col=1, title_text="Pressure (mmHg)")
-    fig.update_yaxes(row=2, col=1, title_text="Flow rates (l/s)")
-    fig.update_xaxes(row=2, col=1, title_text="Time (s)")
-
-    fig.add_scatter(x=t, y=convert(outputs["p_lv"], to="mmHg"), name=latex("P_{lv}"), row=1, col=1)
-    fig.add_scatter(x=t, y=convert(outputs["p_ao"], to="mmHg"), name=latex("P_{ao}"), row=1, col=1)
-    fig.add_scatter(x=t, y=convert(outputs["p_pu"], to="mmHg"), name=latex("P_{pu}"), row=1, col=1)
-
-    fig.add_scatter(x=t, y=outputs["q_mt"], name=latex("Q_{mt}"), row=2, col=1)
-    fig.add_scatter(x=t, y=outputs["q_av"], name=latex("Q_{av}"), row=2, col=1)
-    fig.add_scatter(x=t, y=outputs["q_sys"], name=latex("Q_{sys}"), row=2, col=1)
-
-    return fig
-
-
-def plot_rv_pressures(t, outputs):
-
-    # df = df.iloc[200:]
-
-    fig = make_subplots(2, 1, shared_xaxes="all")
-    fig.update_layout(hovermode="x")
-    fig.update_yaxes(row=1, col=1, title_text="Pressure (mmHg)")
-    fig.update_yaxes(row=2, col=1, title_text="Flow rates (l/s)")
-    fig.update_xaxes(row=2, col=1, title_text="Time (s)")
-
-    fig.add_scatter(x=t, y=convert(outputs["p_rv"], to="mmHg"), name=latex("P_{rv}"), row=1, col=1)
-    fig.add_scatter(x=t, y=convert(outputs["p_pa"], to="mmHg"), name=latex("P_{pa}"), row=1, col=1)
-    fig.add_scatter(x=t, y=convert(outputs["p_vc"], to="mmHg"), name=latex("P_{vc}"), row=1, col=1)
-
-    fig.add_scatter(x=t, y=outputs["q_tc"], name=latex("Q_{tc}"), row=2, col=1)
-    fig.add_scatter(x=t, y=outputs["q_pv"], name=latex("Q_{pv}"), row=2, col=1)
-    fig.add_scatter(x=t, y=outputs["q_pul"], name=latex("Q_{pul}"), row=2, col=1)
-
-    return fig
-
-
 def main():
     data = get_mghdb_data()
     # ecg_data = jnp.vstack((data["ECG lead I"], data["ECG lead II"], data["ECG lead V"])).T
@@ -175,9 +133,9 @@ def main():
         # hr=hr,
     )
     if INERTIAL:
-        cvs = models.InertialSmithCVS(cd=cd)
+        cvs = models.InertialSmithCVS(cd=cd, v_spt_method="jallon")
     else:
-        cvs = models.SmithCVS(cd=cd)
+        cvs = models.SmithCVS(cd=cd, v_spt_method="jallon")
     if INERTIAL:
         y0 = {
             "v_lv": convert(94.6812, "ml"),
@@ -358,8 +316,8 @@ def main():
     ys = model(data["t"])
     deriv, outputs = model.outputs(data["t"], ys)
     plot_solution(ax, data["t"], ys, model, outputs, "r")
-    plot_lv_pressures(data["t"], outputs).write_html("lv.html", include_mathjax="cdn")
-    plot_rv_pressures(data["t"], outputs).write_html("rv.html", include_mathjax="cdn")
+    plots.plot_lv_pressures(data["t"], outputs).write_html("lv.html", include_mathjax="cdn")
+    plots.plot_rv_pressures(data["t"], outputs).write_html("rv.html", include_mathjax="cdn")
 
     fig, ax = plt.subplots(6, 1, sharex=True)
     for key in y0:

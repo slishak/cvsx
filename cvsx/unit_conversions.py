@@ -50,7 +50,7 @@ class Converter:
     def __init__(
         self,
         default_pressure: str = "mmHg",
-        default_volume: str = "ml",
+        default_volume: str = "l",
     ):
         """_summary_
 

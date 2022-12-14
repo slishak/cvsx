@@ -6,8 +6,6 @@ import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 
-from cvsx import parameters as p
-
 
 class CardiacDriverBase(ABC, eqx.Module):
     dynamic: bool = False
@@ -37,18 +35,7 @@ class FixedCardiacDriver(CardiacDriverBase):
 
 
 class SimpleCardiacDriver(FixedCardiacDriver):
-    b: float
-
-    def __init__(
-        self,
-        parameter_source: str = "smith",
-        hr: Optional[Union[float, Callable]] = None,
-    ):
-        params = p.cd_parameters[parameter_source]
-        self.b = params["b"]
-        if hr is None:
-            hr = params["hr"]
-        super().__init__(hr)
+    b: jnp.ndarray = jnp.array(80.0)
 
     def e(self, t: jnp.ndarray) -> jnp.ndarray:
         if self.dynamic:
@@ -62,20 +49,6 @@ class GaussianCardiacDriver(FixedCardiacDriver):
     a: jnp.ndarray
     b: jnp.ndarray
     c: jnp.ndarray
-
-    def __init__(
-        self,
-        parameter_source: str = "chung",
-        hr: Optional[Union[float, Callable]] = None,
-    ):
-
-        params = p.cd_parameters[parameter_source]
-        self.a = params["a"]
-        self.b = params["b"]
-        self.c = params["c"]
-        if hr is None:
-            hr = params["hr"]
-        super().__init__(hr)
 
     def e(self, t: jnp.ndarray) -> jnp.ndarray:
 
@@ -99,17 +72,13 @@ class LearnedHR(SimpleCardiacDriver):
 
     def __init__(
         self,
-        parameter_source: str = "smith",
         n_beats: int = 100,
         guess_hr: float = 60.0,
         min_interval: float = 60 / 200,
         max_interval: float = 60 / 20,
         e_sample: jnp.ndarray = jnp.array([0.05, 0.8]),
     ):
-        super().__init__(
-            parameter_source,
-            hr=60.0,
-        )
+        super().__init__(hr=60, b=80)
 
         self.n_beats = n_beats
         self.dynamic = False

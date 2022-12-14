@@ -10,7 +10,8 @@ from cvsx.unit_conversions import convert
 
 if __name__ == "__main__":
     valve = c.InertialValve(**p.revie_2012["mt"])
-    restoring_valve = c.RestoringInertialValve(slope=500, **p.revie_2012["mt"])
+    restoring_valve = c.RestoringInertialValve(**p.revie_2012["mt"])
+    regurgitating_valve = c.RegurgitatingInertialValve(**p.revie_2012["mt"])
     smooth_valve = c.SmoothInertialValve(**p.revie_2012["mt"])
 
     x = jnp.linspace(-10, 50, 500)
@@ -23,33 +24,36 @@ if __name__ == "__main__":
     q_flow = convert(xx, "ml/s")
     dp = convert(yy, "mmHg")
 
-    deriv = valve.flow_rate_deriv(dp, dp * 0, q_flow)
-    deriv_rest = restoring_valve.flow_rate_deriv(dp, dp * 0, q_flow)
-    deriv_smooth = smooth_valve.flow_rate_deriv(dp, dp * 0, q_flow)
+    deriv = valve.flow_rate_deriv(0, dp, dp * 0, q_flow)
+    deriv_rest = restoring_valve.flow_rate_deriv(0, dp, dp * 0, q_flow)
+    deriv_reg = regurgitating_valve.flow_rate_deriv(0, dp, dp * 0, q_flow)
+    deriv_smooth = smooth_valve.flow_rate_deriv(0, dp, dp * 0, q_flow)
 
     fig = go.Figure()
     fig.add_scatter(x=q_flow[80, :], y=deriv[80, :], name="Original")
     fig.add_scatter(x=q_flow[80, :], y=deriv_rest[80, :], name="Restoring gradient")
+    fig.add_scatter(x=q_flow[80, :], y=deriv_reg[80, :], name="Regurgitating valve")
     fig.add_scatter(x=q_flow[80, :], y=deriv_smooth[80, :], name="Smoothed")
-    fig.update_xaxes(title_text="q (ml/s)")
-    fig.update_yaxes(title_text="dq_dt (ml/s^2)")
+    fig.update_xaxes(title_text="q (l/s)")
+    fig.update_yaxes(title_text="dq_dt (l/s^2)")
     fig.write_html("valve_law_2.html")
 
     fig = go.Figure()
     fig.add_surface(x=q_flow, y=dp, z=deriv, opacity=0.6, colorscale="Blues")
     fig.add_surface(x=q_flow, y=dp, z=deriv_rest, opacity=0.6, colorscale="Greens")
-    fig.add_surface(x=q_flow, y=dp, z=deriv_smooth, opacity=0.6, colorscale="Oranges")
+    fig.add_surface(x=q_flow, y=dp, z=deriv_reg, opacity=0.6, colorscale="Reds")
+    # fig.add_surface(x=q_flow, y=dp, z=deriv_smooth, opacity=0.6, colorscale="Oranges")
     fig.add_scatter3d(
-        x=[0, 0], y=[min(y), 0], z=[0, 0], mode="lines", line_color="red", line_width=6
+        x=[0, 0], y=[dp.min(), 0], z=[0, 0], mode="lines", line_color="red", line_width=6
     )
     fig.add_scatter3d(
-        x=[min(x), 0], y=[0, 0], z=[0, 0], mode="lines", line_color="blue", line_width=6
+        x=[q_flow.min(), 0], y=[0, 0], z=[0, 0], mode="lines", line_color="blue", line_width=6
     )
     fig.update_layout(
         scene={
-            "xaxis_title": "q (ml/s)",
+            "xaxis_title": "q (l/s)",
             "yaxis_title": "dp (mmHg)",
-            "zaxis_title": "dq_dt (ml/s^2)",
+            "zaxis_title": "dq_dt (l/s^2)",
         }
     )
     fig.write_html("valve_law.html")

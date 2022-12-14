@@ -19,7 +19,7 @@ from cvsx.unit_conversions import convert
 def main(
     dynamic=False,
     inertial=False,
-    jallon=True,
+    jallon=False,
 ):
 
     rtol = 1e-4
@@ -36,7 +36,7 @@ def main(
         parameter_source = "jallon"
     else:
         if inertial:
-            model = models.SmoothInertialSmithCVS
+            model = models.InertialSmithCVS
             parameter_source = "revie"
         else:
             model = models.SmithCVS
@@ -105,13 +105,11 @@ def main(
 
     # out_dbg = cvs(jnp.array(0.0), init_states, (nl_solver,))
 
-
-
     res = diffrax.diffeqsolve(
         term,
         ode_solver,
         0.0,
-        40.0,
+        5.0,
         None,
         init_states,
         args=(nl_solver,),
@@ -130,50 +128,44 @@ if __name__ == "__main__":
     with jax.default_device(jax.devices("cpu")[0]):
         print("Compile")
         t0 = perf_counter()
-        main(jallon=False)
+        main(inertial=True)
         t1 = perf_counter()
         print(f"Compiled in {t1-t0:6f}s. Start timing")
 
         for i in range(4):
             ta = perf_counter()
-            res1, deriv1, out1 = main(jallon=False)
+            res1, deriv1, out1 = main(inertial=True)
             tb = perf_counter()
             print(f'{tb-ta:.6f}s, {res1.stats["num_steps"]} steps')
 
-    all_states = res1.ys.keys() | res2.ys.keys()
-    fig, ax = plt.subplots(len(all_states), 2, sharex=True)
+    # all_states = res1.ys.keys()
+    # fig, ax = plt.subplots(len(all_states), 2, sharex=True)
+    # for i, key in enumerate(all_states):
+    #     try:
+    #         ax[i, 0].plot(res1.ts, res1.ys[key], ".-", label=key, markersize=2)
+    #     except KeyError:
+    #         pass
+    #     else:
+    #         ax[i, 1].plot(res1.ts, deriv1[key], ".-", label=key, markersize=2)
+    #     ax[i, 0].set_ylabel(key)
+    #     ax[i, 1].set_ylabel(f"d{key}_dt")
 
-    min_q = 0.0
-
-    for i, key in enumerate(all_states):
-        try:
-            ax[i, 0].plot(res1.ts, res1.ys[key], ".-", label=key, markersize=2)
-        except KeyError:
-            pass
-        else:
-            ax[i, 1].plot(res1.ts, deriv1[key], ".-", label=key, markersize=2)
-        try:
-            ax[i, 0].plot(res2.ts, res2.ys[key], ".-", label=key, markersize=2)
-        except KeyError:
-            pass
-        else:
-            ax[i, 1].plot(res2.ts, deriv2[key], ".-", label=key, markersize=2)
-        ax[i, 0].set_ylabel(key)
-        ax[i, 1].set_ylabel(f"d{key}_dt")
-
-    fig, ax = plt.subplots(4, 1, sharex=True)
-    ax[0].plot(res1.ts, out1["p_ao"], label="Static")
-    ax[0].plot(res2.ts, out2["p_ao"], label="Dynamic")
+    fig, ax = plt.subplots(6, 1, sharex=True)
+    ax[0].plot(res1.ts, out1["p_ao"])
+    ax[0].plot(res1.ts, out1["p_lv"], ":")
+    ax[0].plot(res1.ts, out1["p_pu"], ":")
     ax[0].set_ylabel("p_ao")
-    ax[1].plot(res1.ts, out1["p_vc"], label="Static")
-    ax[1].plot(res2.ts, out2["p_vc"], label="Dynamic")
-    ax[1].set_ylabel("p_vc")
-    ax[2].plot(res1.ts, out1["p_pa"], label="Static")
-    ax[2].plot(res2.ts, out2["p_pa"], label="Dynamic")
-    ax[2].set_ylabel("p_pa")
-    ax[3].plot(res1.ts, out1["e_t"], label="Static")
-    ax[3].plot(res2.ts, out2["e_t"], label="Dynamic")
-    ax[3].set_ylabel("e(t)")
+    ax[1].plot(res1.ts, out1["q_av"])
+    ax[1].set_ylabel("q_av")
+    ax[2].plot(res1.ts, deriv1["q_av"])
+    ax[2].set_ylabel("dq_av_dt")
+
+    ax[3].plot(res1.ts, out1["p_vc"])
+    ax[3].set_ylabel("p_vc")
+    ax[4].plot(res1.ts, out1["p_pa"])
+    ax[4].set_ylabel("p_pa")
+    ax[5].plot(res1.ts, out1["e_t"])
+    ax[5].set_ylabel("e(t)")
 
     # plt.figure()
     # plt.hist(jnp.log(jnp.diff(res.ts[~jnp.isinf(res.ts)])))

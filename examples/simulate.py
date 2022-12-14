@@ -5,52 +5,92 @@ import jax
 import jax.numpy as jnp
 import diffrax
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 
 jax.config.update("jax_enable_x64", True)
 
 from cvsx import models
 from cvsx import cardiac_drivers as drv
 from cvsx import respiratory as resp
+from cvsx import components as c, parameters as p
 from cvsx.unit_conversions import convert
+import plots
 
 
-@partial(jax.jit, static_argnums=[0, 1, 2])
-def main(dynamic=False, inertial=False, jallon=True):
+@partial(jax.jit, static_argnums=[0, 1, 2, 3, 4])
+def main(
+    dynamic_hr=False,
+    inertial=True,
+    jallon=False,
+    valve_type="smith",
+    v_spt_method="solver",
+    beta=0.1,
+    hb=1.0,
+    mu=1.0,
+):
 
-    rtol = 1e-4
-    atol = 1e-7
+    rtol = 1e-3
+    atol = 1e-6
 
-    if dynamic:
+    if dynamic_hr:
         f_hr = lambda t: 80 + 20 * jnp.tanh(0.3 * (t - 20))
         # f_hr = lambda t: jnp.full_like(t, fill_value=60.0)
     else:
         f_hr = 60.0
 
+    cd = drv.SimpleCardiacDriver(hr=f_hr)
+
+    model = models.SmithCVS
     if jallon:
-        model = models.SmithCVS
         parameter_source = "jallon"
     else:
-        if inertial:
-            model = models.SmoothInertialSmithCVS
-            parameter_source = "revie"
-        else:
-            model = models.SmithCVS
-            parameter_source = "smith"
+        parameter_source = "revie"  # "smith"
+
+    match valve_type:
+        case "smith":
+            valve_class = c.Valve
+        case "mitral_regurgitation":
+            valve_class = {
+                "mt": c.TwoWayValve,
+                "tc": c.Valve,
+                "av": c.Valve,
+                "pv": c.Valve,
+            }
+        case "smooth":
+            valve_class = c.SmoothValve
+
+    params = p.build_parameter_tree(parameter_source, inertial, cd, valve_class)
+
+    # if inertial:
+    #     if inertial == "restoring":
+    #         model = models.RestoringInertialSmithCVS
+    #     elif inertial == "regurgitating":
+    #         model = models.MitralValveRegurgitation
+    #     else:
+    #         model = models.InertialSmithCVS
+    #     parameter_source = "revie"
+    # else:
+    #     model = models.SmithCVS
+    #     parameter_source = "revie"  # "smith"
 
     cvs = model(
-        parameter_source=parameter_source,
-        cd=drv.SimpleCardiacDriver(hr=f_hr),
+        **params,
         p_pl_is_input=jallon,
+        v_spt_method=v_spt_method,
     )
 
     if jallon:
         cvs = models.JallonHeartLungs(
             cvs=cvs,
             resp_sys=resp.PassiveRespiratorySystem(),
-            resp_pattern=resp.RespiratoryPatternGenerator(),
+            resp_pattern=resp.RespiratoryPatternGenerator(
+                beta=beta,
+                hb=convert(hb, "1/l"),
+                mu=convert(mu, "mmHg"),
+            ),
         )
 
-    if inertial:
+    if parameter_source == "revie":
         init_states = {
             "v_lv": convert(94.6812, "ml"),
             "v_ao": convert(133.3381, "ml"),
@@ -58,10 +98,6 @@ def main(dynamic=False, inertial=False, jallon=True):
             "v_rv": convert(90.7302, "ml"),
             "v_pa": convert(43.0123, "ml"),
             "v_pu": convert(808.4579, "ml"),
-            "q_mt": convert(245.5813, "ml/s"),
-            "q_av": convert(0.0, "ml/s"),
-            "q_tc": convert(190.0661, "ml/s"),
-            "q_pv": convert(0.0, "ml/s"),
         }
     else:
         init_states = {
@@ -72,6 +108,15 @@ def main(dynamic=False, inertial=False, jallon=True):
             "v_pa": convert(187.0, "ml"),
             "v_pu": convert(902.0, "ml"),
         }
+    if inertial:
+        init_states.update(
+            {
+                "q_mt": convert(245.5813, "ml/s"),
+                "q_av": convert(0.0, "ml/s"),
+                "q_tc": convert(190.0661, "ml/s"),
+                "q_pv": convert(0.0, "ml/s"),
+            }
+        )
 
     if jallon:
         init_states.update(
@@ -83,19 +128,22 @@ def main(dynamic=False, inertial=False, jallon=True):
             }
         )
 
-    if dynamic:
+    if dynamic_hr:
         init_states["s"] = 0.0
 
     nl_solver = diffrax.NewtonNonlinearSolver(
         rtol=rtol,
         atol=atol,
     )
-    ode_solver = diffrax.Tsit5()
+    ode_solver = diffrax.Kvaerno5()
     term = diffrax.ODETerm(cvs)
     stepsize_controller = diffrax.PIDController(
         rtol=rtol,
         atol=atol,
         dtmax=1e-2,
+        # pcoeff=0.4,
+        # icoeff=0.3,
+        # dcoeff=0.0,
     )
 
     # out_dbg = cvs(jnp.array(0.0), init_states, (nl_solver,))
@@ -104,7 +152,7 @@ def main(dynamic=False, inertial=False, jallon=True):
         term,
         ode_solver,
         0.0,
-        40.0,
+        60.0,
         None,
         init_states,
         args=(nl_solver,),
@@ -120,64 +168,91 @@ def main(dynamic=False, inertial=False, jallon=True):
 
 
 if __name__ == "__main__":
+
+    runs = {
+        f"Jallon (beta={beta})": {
+            "jallon": True,
+            "inertial": False,
+            "beta": beta,
+            "hb": 0.0,
+            "mu": 1.0,
+        }
+        for beta in [0.1, 0.5, 1.0, 1.5, 2.0]
+        # for mu in [0.0, 0.5, 1.0, 1.5, 2.0]
+        # "Jallon inertial": {"jallon": True, "inertial": True, "beta": 0.0},
+        # "Inertial": {"inertial": True},
+        # "Non-inertial": {"inertial": False},
+        # "Regurgitating": {"valve_type": "mitral_regurgitation"},
+        # "Regurgitating non-inertial": {"valve_type": "mitral_regurgitation", "inertial": False},
+    }
+    n_repeats = 4
+
     with jax.default_device(jax.devices("cpu")[0]):
-        print("Compile")
-        t0 = perf_counter()
-        main(jallon=False)
-        main(jallon=True)
-        t1 = perf_counter()
-        print(f"Compiled in {t1-t0:6f}s. Start timing")
+        for name, kwargs in runs.items():
+            print(f"Compile: {name}")
+            t0 = perf_counter()
+            main(**kwargs)
+            t1 = perf_counter()
+            print(f"Compiled in {t1-t0:6f}s")
 
-        for i in range(4):
-            ta = perf_counter()
-            res1, deriv1, out1 = main(jallon=False)
-            tb = perf_counter()
-            print(f'{tb-ta:.6f}s, {res1.stats["num_steps"]} steps')
+        results = {}
+        for name, kwargs in runs.items():
+            for i in range(n_repeats):
+                ta = perf_counter()
+                res, deriv, out = main(**kwargs)
+                tb = perf_counter()
+                print(f'{name}: {tb-ta:.6f}s, {res.stats["num_steps"]} steps')
+                results[name] = (res, deriv, out)
 
-        for i in range(4):
-            ta = perf_counter()
-            res2, deriv2, out2 = main(jallon=True)
-            tb = perf_counter()
-            print(f'Jallon: {tb-ta:.6f}s, {res2.stats["num_steps"]} steps')
+    plot_dict = {
+        "lv.html": plots.plot_lv_pressures,
+        "rv.html": plots.plot_rv_pressures,
+        "vent.html": plots.plot_vent_interaction,
+        "outputs.html": plots.plot_outputs,
+        "resp.html": plots.plot_resp,
+    }
 
-    all_states = res1.ys.keys() | res2.ys.keys()
-    fig, ax = plt.subplots(len(all_states), 2, sharex=True)
+    for file, func in plot_dict.items():
+        fig = None
+        for i, (name, (res, deriv, out)) in enumerate(results.items()):
+            fig = func(
+                res.ts,
+                out | res.ys | {f"d{key}_dt": val for key, val in deriv.items()},
+                fig,
+                plots.C[i],
+                group=name,
+            )
+        fig.write_html(file, include_mathjax="cdn")
 
-    min_q = 0.0
-
-    for i, key in enumerate(all_states):
-        try:
-            ax[i, 0].plot(res1.ts, res1.ys[key], ".-", label=key, markersize=2)
-        except KeyError:
-            pass
-        else:
-            ax[i, 1].plot(res1.ts, deriv1[key], ".-", label=key, markersize=2)
-        try:
-            ax[i, 0].plot(res2.ts, res2.ys[key], ".-", label=key, markersize=2)
-        except KeyError:
-            pass
-        else:
-            ax[i, 1].plot(res2.ts, deriv2[key], ".-", label=key, markersize=2)
-        ax[i, 0].set_ylabel(key)
-        ax[i, 1].set_ylabel(f"d{key}_dt")
-
-    fig, ax = plt.subplots(4, 1, sharex=True)
-    ax[0].plot(res1.ts, out1["p_ao"], label="Static")
-    ax[0].plot(res2.ts, out2["p_ao"], label="Dynamic")
-    ax[0].set_ylabel("p_ao")
-    ax[1].plot(res1.ts, out1["p_vc"], label="Static")
-    ax[1].plot(res2.ts, out2["p_vc"], label="Dynamic")
-    ax[1].set_ylabel("p_vc")
-    ax[2].plot(res1.ts, out1["p_pa"], label="Static")
-    ax[2].plot(res2.ts, out2["p_pa"], label="Dynamic")
-    ax[2].set_ylabel("p_pa")
-    ax[3].plot(res1.ts, out1["e_t"], label="Static")
-    ax[3].plot(res2.ts, out2["e_t"], label="Dynamic")
-    ax[3].set_ylabel("e(t)")
-
-    # plt.figure()
-    # plt.hist(jnp.log(jnp.diff(res.ts[~jnp.isinf(res.ts)])))
-    # plt.xlabel("Log timestep")
-    # plt.ylabel("Count")
-
-    plt.show()
+    # res, deriv, out = results["Restoring"]
+    # restoring_valve = c.RestoringInertialValve(**p.revie_2012["mt"])
+    # dp = out["p_pu"] - out["p_lv"]
+    # q = out["q_mt"]
+    # dp_a = jnp.linspace(-1, dp[jnp.isfinite(dp)].max(), 200)
+    # q_a = jnp.linspace(-0.1, q[jnp.isfinite(q)].max(), 200)
+    # dp_m, q_m = jnp.meshgrid(dp_a, q_a)
+    # dq_dt_m = restoring_valve.flow_rate_deriv(0, dp_m, dp_m * 0, q_m)
+    # dq_dt = deriv["q_mt"]
+    # fig = go.Figure()
+    # fig.add_scatter3d(
+    #     x=q[dp > -1],
+    #     y=dp[dp > -1],
+    #     z=dq_dt[dp > -1],
+    #     mode="lines+markers",
+    #     marker_size=1,
+    # )
+    # fig.add_surface(
+    #     x=q_m,
+    #     y=dp_m,
+    #     z=dq_dt_m,
+    #     colorscale="Reds",
+    #     opacity=0.7,
+    # )
+    # fig.update_layout(
+    #     scene={
+    #         "xaxis_title": "q (l/s)",
+    #         "yaxis_title": "dp (mmHg)",
+    #         "zaxis_title": "dq_dt (l/s^2)",
+    #     }
+    # )
+    # fig.write_html("mitral_valve.html")
