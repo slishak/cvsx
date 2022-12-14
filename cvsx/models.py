@@ -73,6 +73,17 @@ class SmithCVS(eqx.Module):
         outputs["e_t"] = e_t
         return derivatives, outputs
 
+    @property
+    def connections(self) -> dict[str, tuple[c.BloodVessel, str, str]]:
+        return {
+            "q_mt": (self.mt, "p_pu", "p_lv"),
+            "q_av": (self.av, "p_lv", "p_ao"),
+            "q_sys": (self.sys, "p_ao", "p_vc"),
+            "q_tc": (self.tc, "p_vc", "p_rv"),
+            "q_pv": (self.pv, "p_rv", "p_pa"),
+            "q_pul": (self.pul, "p_pa", "p_pu"),
+        }
+
     def pressures_volumes(self, t, e_t, states, solver, p_pl):
 
         v_spt = self.solve_v_spt(t, states["v_lv"], states["v_rv"], e_t, solver)
@@ -118,7 +129,7 @@ class SmithCVS(eqx.Module):
         return p_v
 
     @staticmethod
-    def _valve_flow_rate(
+    def _compute_flow_rate(
         t: jnp.ndarray,
         states: dict,
         p_v: dict,
@@ -136,20 +147,11 @@ class SmithCVS(eqx.Module):
             return valve.flow_rate(t, p_v[p_upstream], p_v[p_downstream])
 
     def flow_rates(self, t: jnp.ndarray, states: dict, p_v: dict) -> dict:
-        flow_rates = {
-            "q_pul": self.pul.flow_rate(t, p_v["p_pa"], p_v["p_pu"]),
-            "q_sys": self.sys.flow_rate(t, p_v["p_ao"], p_v["p_vc"]),
-        }
 
-        for valve, name, p_upstream, p_downstream in [
-            (self.mt, "q_mt", "p_pu", "p_lv"),
-            (self.av, "q_av", "p_lv", "p_ao"),
-            (self.tc, "q_tc", "p_vc", "p_rv"),
-            (self.pv, "q_pv", "p_rv", "p_pa"),
-        ]:
-            flow_rates[name] = self._valve_flow_rate(
-                t, states, p_v, valve, name, p_upstream, p_downstream
-            )
+        flow_rates = {
+            name: self._compute_flow_rate(t, states, p_v, vessel, name, p_upstream, p_downstream)
+            for name, (vessel, p_upstream, p_downstream) in self.connections.items()
+        }
 
         return flow_rates
 
@@ -163,14 +165,9 @@ class SmithCVS(eqx.Module):
             "v_rv": flow_rates["q_tc"] - flow_rates["q_pv"],
         }
 
-        for valve, name, p_upstream, p_downstream in [
-            (self.mt, "q_mt", "p_pu", "p_lv"),
-            (self.av, "q_av", "p_lv", "p_ao"),
-            (self.tc, "q_tc", "p_vc", "p_rv"),
-            (self.pv, "q_pv", "p_rv", "p_pa"),
-        ]:
-            if valve.inertial:
-                derivatives[name] = valve.flow_rate_deriv(
+        for name, (vessel, p_upstream, p_downstream) in self.connections.items():
+            if vessel.inertial:
+                derivatives[name] = vessel.flow_rate_deriv(
                     t, p_v[p_upstream], p_v[p_downstream], flow_rates[name]
             )
 
