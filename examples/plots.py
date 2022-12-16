@@ -1,5 +1,5 @@
 from plotly.subplots import make_subplots
-from plotly.colors import DEFAULT_PLOTLY_COLORS as C
+from plotly.colors import qualitative
 
 from cvsx.unit_conversions import convert
 
@@ -12,7 +12,7 @@ def latex(s: str):
     return s.replace("{", "").replace("}", "")
 
 
-def plot_lv_pressures(t, outputs, fig=None, colour=C[0], group=None):
+def plot_lv_pressures(t, outputs, fig=None, colour=qualitative.Plotly[0], group=None):
 
     if fig is None:
         fig = make_subplots(2, 1, shared_xaxes="all")
@@ -99,7 +99,7 @@ def plot_lv_pressures(t, outputs, fig=None, colour=C[0], group=None):
     return fig
 
 
-def plot_rv_pressures(t, outputs, fig=None, colour=C[0], group=None):
+def plot_rv_pressures(t, outputs, fig=None, colour=qualitative.Plotly[0], group=None):
 
     if fig is None:
         fig = make_subplots(2, 1, shared_xaxes="all")
@@ -186,7 +186,7 @@ def plot_rv_pressures(t, outputs, fig=None, colour=C[0], group=None):
     return fig
 
 
-def plot_vent_interaction(t, outputs, fig=None, colour=C[0], group=None):
+def plot_vent_interaction(t, outputs, fig=None, colour=qualitative.Plotly[0], group=None):
 
     specs = [
         [{}, {"rowspan": 3}],
@@ -279,7 +279,7 @@ def plot_vent_interaction(t, outputs, fig=None, colour=C[0], group=None):
     return fig
 
 
-def plot_outputs(t, outputs, fig=None, colour=C[0], group=None):
+def plot_outputs(t, outputs, fig=None, colour=qualitative.Plotly[0], group=None):
     if fig is None:
         specs = [
             [{"colspan": 2}, None, {"colspan": 2}, None],
@@ -430,7 +430,7 @@ def plot_outputs(t, outputs, fig=None, colour=C[0], group=None):
     return fig
 
 
-def plot_resp(t, outputs, fig=None, colour=C[0], group=None):
+def plot_resp(t, outputs, fig=None, colour=qualitative.Plotly[0], group=None):
 
     channels = [
         ["x", "y"],
@@ -463,17 +463,58 @@ def plot_resp(t, outputs, fig=None, colour=C[0], group=None):
             mode="lines",
         )
 
-
     for i, chans in enumerate(channels):
         for chan in chans:
             fig.add_scatter(
                 x=t,
-                y=convert(outputs[chan], to="mmHg"),
+                y=outputs[chan],
                 name=chan,
                 legendgroup=group,
                 showlegend=group is None,
                 row=i + 1,
                 col=1,
+                line_color=colour,
+            )
+
+    return fig
+
+
+def plot_states(t, outputs, fig=None, colour=qualitative.Plotly[0], group=None):
+
+    plot_spec = [
+        [state, f"d{state}_dt"] for state in ["v_pa", "v_pu", "v_lv", "v_ao", "v_vc", "v_rv"]
+    ]
+
+    if fig is None:
+        fig = make_subplots(len(plot_spec), len(plot_spec[0]), shared_xaxes="all")
+        fig.update_layout(hovermode="x")
+        for i_row, row in enumerate(plot_spec):
+            for i_col, channel in enumerate(row):
+                fig.update_yaxes(row=i_row + 1, col=i_col + 1, title_text=channel)
+
+    if group is not None:
+        fig.add_scatter(
+            x=[None],
+            y=[None],
+            name=group,
+            legendgroup=group,
+            showlegend=True,
+            row=1,
+            col=1,
+            line_color=colour,
+            mode="lines",
+        )
+
+    for i_row, row in enumerate(plot_spec):
+        for i_col, channel in enumerate(row):
+            fig.add_scatter(
+                x=t,
+                y=outputs[channel],
+                name=channel,
+                legendgroup=group,
+                showlegend=group is None,
+                row=i_row + 1,
+                col=i_col + 1,
                 line_color=colour,
             )
 

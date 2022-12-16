@@ -49,7 +49,7 @@ def main(
     match valve_type:
         case "smith":
             valve_class = c.Valve
-        case "mitral_regurgitation":
+        case "regurgitating":
             valve_class = {
                 "mt": c.TwoWayValve,
                 "tc": c.Valve,
@@ -57,27 +57,67 @@ def main(
                 "pv": c.Valve,
             }
         case "smooth":
+            if not inertial:
+                raise RuntimeError("Smooth valves must use inertial model")
             valve_class = c.SmoothValve
+        case "restoring" | "restoring_continuous":
+            if not inertial:
+                raise RuntimeError("Restoring valves must use inertial model")
+            valve_class = partial(
+                c.TwoWayValve,
+                r_reverse=convert(10, "mmHg/ml"),
+                method=valve_type,
+            )
+        case _:
+            raise RuntimeError(valve_type)
 
-    params = p.build_parameter_tree(parameter_source, inertial, cd, valve_class)
-
-    # if inertial:
-    #     if inertial == "restoring":
-    #         model = models.RestoringInertialSmithCVS
-    #     elif inertial == "regurgitating":
-    #         model = models.MitralValveRegurgitation
-    #     else:
-    #         model = models.InertialSmithCVS
-    #     parameter_source = "revie"
-    # else:
-    #     model = models.SmithCVS
-    #     parameter_source = "revie"  # "smith"
+    params = p.build_parameter_tree(
+        parameter_source,
+        inertial,
+        cd,
+        valve_class,
+    )
 
     cvs = model(
         **params,
         p_pl_is_input=jallon,
         v_spt_method=v_spt_method,
     )
+
+    nl_solver = diffrax.NewtonNonlinearSolver(
+        rtol=rtol,
+        atol=atol,
+    )
+
+    if parameter_source == "revie":
+        init_states = {
+            "v_lv": jnp.array(convert(94.6812, "ml")),
+            "v_ao": jnp.array(convert(133.3381, "ml")),
+            "v_vc": jnp.array(convert(329.7803, "ml")),
+            "v_rv": jnp.array(convert(90.7302, "ml")),
+            "v_pa": jnp.array(convert(43.0123, "ml")),
+            "v_pu": jnp.array(convert(808.4579, "ml")),
+        }
+    else:
+        init_states = {
+            "v_lv": jnp.array(convert(137.5, "ml")),
+            "v_ao": jnp.array(convert(951.5, "ml")),
+            "v_vc": jnp.array(convert(3190.0, "ml")),
+            "v_rv": jnp.array(convert(132.0, "ml")),
+            "v_pa": jnp.array(convert(187.0, "ml")),
+            "v_pu": jnp.array(convert(902.0, "ml")),
+        }
+
+    if dynamic_hr:
+        init_states["s"] = jnp.array(0.0)
+
+    if inertial:
+        p_v = cvs.pressures_volumes(
+            jnp.array(0.0), jnp.array(0.0), init_states, nl_solver, cvs.p_pl
+        )
+        for name, (vessel, p_upstream, p_downstream) in cvs.connections.items():
+            if vessel.inertial:
+                init_states[name] = vessel.flow_rate(0.0, p_v[p_upstream], p_v[p_downstream])
 
     if jallon:
         cvs = models.JallonHeartLungs(
@@ -89,53 +129,18 @@ def main(
                 mu=convert(mu, "mmHg"),
             ),
         )
-
-    if parameter_source == "revie":
-        init_states = {
-            "v_lv": convert(94.6812, "ml"),
-            "v_ao": convert(133.3381, "ml"),
-            "v_vc": convert(329.7803, "ml"),
-            "v_rv": convert(90.7302, "ml"),
-            "v_pa": convert(43.0123, "ml"),
-            "v_pu": convert(808.4579, "ml"),
-        }
-    else:
-        init_states = {
-            "v_lv": convert(137.5, "ml"),
-            "v_ao": convert(951.5, "ml"),
-            "v_vc": convert(3190.0, "ml"),
-            "v_rv": convert(132.0, "ml"),
-            "v_pa": convert(187.0, "ml"),
-            "v_pu": convert(902.0, "ml"),
-        }
-    if inertial:
         init_states.update(
             {
-                "q_mt": convert(245.5813, "ml/s"),
-                "q_av": convert(0.0, "ml/s"),
-                "q_tc": convert(190.0661, "ml/s"),
-                "q_pv": convert(0.0, "ml/s"),
+                "x": jnp.array(-0.6),
+                "y": jnp.array(0.0),
+                "p_mus": jnp.array(0.0),
+                "v_alv": jnp.array(0.5),
             }
         )
 
-    if jallon:
-        init_states.update(
-            {
-                "x": -0.6,
-                "y": 0.0,
-                "p_mus": 0.0,
-                "v_alv": 0.5,
-            }
-        )
+    # out_dbg = cvs(jnp.array(0.0), init_states, (nl_solver,))
 
-    if dynamic_hr:
-        init_states["s"] = 0.0
-
-    nl_solver = diffrax.NewtonNonlinearSolver(
-        rtol=rtol,
-        atol=atol,
-    )
-    ode_solver = diffrax.Kvaerno5()
+    ode_solver = diffrax.Heun()
     term = diffrax.ODETerm(cvs)
     stepsize_controller = diffrax.PIDController(
         rtol=rtol,
@@ -145,19 +150,16 @@ def main(
         # icoeff=0.3,
         # dcoeff=0.0,
     )
-
-    # out_dbg = cvs(jnp.array(0.0), init_states, (nl_solver,))
-
     res = diffrax.diffeqsolve(
         term,
         ode_solver,
         0.0,
-        60.0,
-        None,
+        2.0,
+        1e-3,
         init_states,
         args=(nl_solver,),
-        stepsize_controller=stepsize_controller,
-        max_steps=16**4,
+        # stepsize_controller=stepsize_controller,
+        max_steps=16**5,
         saveat=diffrax.SaveAt(steps=True),
         adjoint=diffrax.NoAdjoint(),
     )
@@ -170,22 +172,26 @@ def main(
 if __name__ == "__main__":
 
     runs = {
-        f"Jallon (beta={beta})": {
-            "jallon": True,
-            "inertial": False,
-            "beta": beta,
-            "hb": 0.0,
-            "mu": 1.0,
-        }
-        for beta in [0.1, 0.5, 1.0, 1.5, 2.0]
+        # f"Jallon (beta={0.1})": {
+        #     "jallon": True,
+        #     "inertial": False,
+        #     "beta": 0.1,
+        #     "hb": 0.0,
+        #     "mu": 1.0,
+        # }
+        # for beta in [0.1, 0.5, 1.0, 1.5, 2.0]
         # for mu in [0.0, 0.5, 1.0, 1.5, 2.0]
         # "Jallon inertial": {"jallon": True, "inertial": True, "beta": 0.0},
-        # "Inertial": {"inertial": True},
         # "Non-inertial": {"inertial": False},
+        "standard": {"inertial": True},
+        "mitral regurgitation": {"inertial": True, "valve_type": "regurgitating"},
+        "restoring": {"inertial": True, "valve_type": "restoring"},
+        "restoring_continuous": {"inertial": True, "valve_type": "restoring_continuous"},
+        "smooth": {"inertial": True, "valve_type": "smooth"},
         # "Regurgitating": {"valve_type": "mitral_regurgitation"},
         # "Regurgitating non-inertial": {"valve_type": "mitral_regurgitation", "inertial": False},
     }
-    n_repeats = 4
+    n_repeats = 1
 
     with jax.default_device(jax.devices("cpu")[0]):
         for name, kwargs in runs.items():
@@ -209,7 +215,8 @@ if __name__ == "__main__":
         "rv.html": plots.plot_rv_pressures,
         "vent.html": plots.plot_vent_interaction,
         "outputs.html": plots.plot_outputs,
-        "resp.html": plots.plot_resp,
+        # "resp.html": plots.plot_resp,
+        "states.html": plots.plot_states,
     }
 
     for file, func in plot_dict.items():
@@ -219,7 +226,7 @@ if __name__ == "__main__":
                 res.ts,
                 out | res.ys | {f"d{key}_dt": val for key, val in deriv.items()},
                 fig,
-                plots.C[i],
+                plots.qualitative.Plotly[i],
                 group=name,
             )
         fig.write_html(file, include_mathjax="cdn")

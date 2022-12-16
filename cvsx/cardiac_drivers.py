@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from dataclasses import KW_ONLY
 from typing import Callable, Optional, Union
 
 import equinox as eqx
@@ -8,15 +9,15 @@ import jax.scipy.special as jsp
 
 
 class CardiacDriverBase(ABC, eqx.Module):
+    _: KW_ONLY
     dynamic: bool = False
 
 
 class FixedCardiacDriver(CardiacDriverBase):
     hr: Union[float, Callable]
 
-    def __init__(self, hr: Union[float, Callable]):
-        self.hr = hr
-        self.dynamic = callable(hr)
+    def __post_init__(self):
+        self.dynamic = callable(self.hr)
 
     def __call__(self, t: jnp.ndarray, s: Optional[jnp.ndarray] = None) -> jnp.ndarray:
         if self.dynamic:

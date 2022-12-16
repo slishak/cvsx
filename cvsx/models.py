@@ -193,10 +193,10 @@ class SmithCVS(eqx.Module):
             # Linearisation from Jallon 2009
             # fmt: off
             num = e_t * (
-                self.lvf.p_es(v_lv) - self.rvf.p_es(v_rv) + self.spt.e * self.spt.v_d
+                self.lvf.p_es(t, v_lv) - self.rvf.p_es(t, v_rv) + self.spt.e * self.spt.v_d
             ) + (1 - e_t) * (
-                self.lvf.p_ed_linear(v_lv)
-                - self.rvf.p_ed_linear(v_rv)
+                self.lvf.p_ed_linear(t, v_lv)
+                - self.rvf.p_ed_linear(t, v_rv)
                 + self.spt.lam * self.spt.p_0 * self.spt.v_0
             )
             den = e_t * (

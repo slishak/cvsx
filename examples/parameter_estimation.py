@@ -18,11 +18,9 @@ jax.config.update("jax_platform_name", "cpu")
 
 from cvsx import models
 from cvsx import cardiac_drivers as drv
+from cvsx import parameters as p
 from cvsx.unit_conversions import convert
 import plots
-
-
-INERTIAL = False
 
 
 def get_mghdb_data(
@@ -84,7 +82,7 @@ class TrainableODE(eqx.Module):
             #     icoeff=0.3,
             #     dcoeff=0,
             # ),
-            max_steps=16**4,
+            max_steps=int(40 / 2e-3),
             saveat=diffrax.SaveAt(ts=ts),
         )
         return res.ys
@@ -121,22 +119,18 @@ def plot_solution(ax, t, ys, model, outputs, color, alpha=1.0, t_ticks=True):
     ax[5, 0].plot(t, sum(v for k, v in ys.items() if k[0] == "v"), color=color, alpha=alpha)
 
 
-def main():
+def main(inertial=False):
     data = get_mghdb_data()
     # ecg_data = jnp.vstack((data["ECG lead I"], data["ECG lead II"], data["ECG lead V"])).T
     # hr = drv.ECG_HR(data["t"], ecg_data, key=jax.random.PRNGKey(20))
-    cd = drv.LearnedHR(
-        parameter_source="smith",
-        guess_hr=42.0,
-        n_beats=40,
-        e_sample=jnp.array([0.05, 0.5, 0.8, 0.95])
-        # hr=hr,
+    cd = drv.LearnedHR(guess_hr=42.0, n_beats=40, e_sample=jnp.array([0.05, 0.5, 0.8, 0.95]))
+    params = p.build_parameter_tree(
+        "revie",
+        inertial,
+        cd,
     )
-    if INERTIAL:
-        cvs = models.InertialSmithCVS(cd=cd, v_spt_method="jallon")
-    else:
-        cvs = models.SmithCVS(cd=cd, v_spt_method="jallon")
-    if INERTIAL:
+    cvs = models.SmithCVS(**params, v_spt_method="jallon")
+    if inertial:
         y0 = {
             "v_lv": convert(94.6812, "ml"),
             "v_ao": convert(133.3381, "ml"),
@@ -215,7 +209,7 @@ def main():
             tree.model.cd.offset,
             # tree.model.cd.b,
         ]
-        if INERTIAL:
+        if inertial:
             nodes.extend(
                 [
                     tree.y0["q_mt"],

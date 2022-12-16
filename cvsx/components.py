@@ -83,13 +83,17 @@ class BloodVessel(eqx.Module):
         q_flow: jnp.ndarray,
     ) -> jnp.ndarray:
         if not self.inertial:
-            raise RuntimeError("Inertial valve has no flow_rate_deriv method")
+            raise RuntimeError("Non-inertial valve has no flow_rate_deriv method")
         dq_dt = (p_upstream - p_downstream - q_flow * self.r) / self.l
         return dq_dt
 
 
 class Valve(BloodVessel):
-    allow_reverse_flow: bool = False
+    allow_reverse_flow: bool
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.allow_reverse_flow = False
 
     def open(
         self,
@@ -128,8 +132,24 @@ class Valve(BloodVessel):
 
 
 class TwoWayValve(Valve):
-    allow_reverse_flow: bool = True
-    r_reverse: float = convert(10, "mmHg/ml")
+    r_reverse: float
+    method: str
+
+    def __init__(
+        self,
+        *args,
+        r_reverse=convert(1, "mmHg/ml"),
+        method="regurgitating",
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.allow_reverse_flow = True
+        self.r_reverse = r_reverse
+        if method not in ("restoring", "restoring_continuous", "regurgitating"):
+            raise NotImplementedError(method)
+        if not self.inertial and method != "regurgitating":
+            raise NotImplementedError("Restoring non-inertial valve")
+        self.method = method
 
     def open(
         self,
@@ -137,27 +157,14 @@ class TwoWayValve(Valve):
         p_downstream: jnp.ndarray,
         q_flow: jnp.ndarray,
     ) -> jnp.ndarray:
-        if self.inertial:
-            return q_flow > 0.0
-        else:
+
+        if not self.inertial:
             return p_upstream > p_downstream
 
-    def flow_rate_reversed(
-        self,
-        t: jnp.ndarray,
-        p_upstream: jnp.ndarray,
-        p_downstream: jnp.ndarray,
-    ) -> jnp.ndarray:
-        return (p_upstream - p_downstream) / self.r_reverse
+        if self.method == "regurgitating":
+            return q_flow > 0.0
 
-    def flow_rate_deriv_reversed(
-        self,
-        t: jnp.ndarray,
-        p_upstream: jnp.ndarray,
-        p_downstream: jnp.ndarray,
-        q_flow: jnp.ndarray,
-    ) -> jnp.ndarray:
-        return (p_upstream - p_downstream - q_flow * self.r_reverse) / self.l
+        return super().open(p_upstream, p_downstream, q_flow)
 
     def flow_rate(
         self,
@@ -173,6 +180,29 @@ class TwoWayValve(Valve):
 
         return jnp.where(valve_open, q_flow, q_flow_rev)
 
+    def flow_rate_reversed(
+        self,
+        t: jnp.ndarray,
+        p_upstream: jnp.ndarray,
+        p_downstream: jnp.ndarray,
+    ) -> jnp.ndarray:
+        if self.method == "regurgitating":
+            return (p_upstream - p_downstream) / self.r_reverse
+        else:
+            return jnp.zeros_like(p_upstream)
+
+    def flow_rate_deriv_reversed(
+        self,
+        t: jnp.ndarray,
+        p_upstream: jnp.ndarray,
+        p_downstream: jnp.ndarray,
+        q_flow: jnp.ndarray,
+    ) -> jnp.ndarray:
+        if self.method == "regurgitating":
+            return (p_upstream - p_downstream - q_flow * self.r_reverse) / self.l
+        else:
+            return (-q_flow * self.r_reverse) / self.l
+
     def flow_rate_deriv(
         self,
         t: jnp.ndarray,
@@ -182,13 +212,27 @@ class TwoWayValve(Valve):
     ) -> jnp.ndarray:
         dq_dt_fwd = super().flow_rate_deriv(t, p_upstream, p_downstream, q_flow)
         dq_dt_rev = self.flow_rate_deriv_reversed(t, p_upstream, p_downstream, q_flow)
-        # return jnp.maximum(dq_dt_fwd, dq_dt_rev)
-        return jnp.where(self.open(p_upstream, p_downstream, q_flow), dq_dt_fwd, dq_dt_rev)
+        if self.method == "restoring_continuous":
+            return jnp.maximum(dq_dt_fwd, dq_dt_rev)
+        else:
+            return jnp.where(self.open(p_upstream, p_downstream, q_flow), dq_dt_fwd, dq_dt_rev)
 
 
-class SmoothValve(TwoWayValve):
-    q_threshold_slope: float = convert(10.0, "ml/s")
-    q_threshold_min: float = convert(10.0, "ml/s")
+class SmoothValve(Valve):
+    r_reverse: float
+
+    def __init__(
+        self,
+        r: float,
+        l: float,
+        inertial: bool = True,
+        r_reverse: float = convert(1, "mmHg/ml"),
+    ):
+        super().__init__(r, l, inertial=inertial)
+        self.allow_reverse_flow = True
+        # Prevent r_reverse from being too low
+        r_reverse = jnp.where(r_reverse < 2 * r, 2 * r, r_reverse)
+        self.r_reverse = r_reverse
 
     def flow_rate_deriv(
         self,
@@ -199,23 +243,23 @@ class SmoothValve(TwoWayValve):
     ) -> jnp.ndarray:
         # Differential pressure across valve
         dp = p_upstream - p_downstream
-        # Find threshold flow rate below which to smooth out
-        q_threshold = self.q_threshold_slope * -dp / convert(1.0, "mmHg")
-        q_threshold = jnp.where(
-            q_threshold > self.q_threshold_min, q_threshold, self.q_threshold_min
-        )
 
         # Flow rate derivative
         dq_dt = (dp - q_flow * self.r) / self.l
 
-        # Jacobian element d(dq_dt)_dq at threshold point, to match gradient
-        dq_dt_at_q_threshold = (dp - q_threshold * self.r) / self.l
+        # Quadratic coefficients satisfying constraints:
+        #   dq_dt_smooth = a*q**2 + b*q
+        #   Equal to zero at q=0
+        #   Gradient at q=0 is -r_reverse/l
+        #   Matches both value and gradient of dq_dt at some q_threshold
+        a = -((self.r - self.r_reverse) ** 2) / (4 * self.l * dp)
+        q_threshold = 2 * dp / (self.r - self.r_reverse)
+        dq_dt_smooth = a * q_flow**2 - self.r_reverse * q_flow / self.l
 
-        # Quadratic smoothing between threshold and (0, 0)
-        a = -self.r / (self.l * q_threshold) - dq_dt_at_q_threshold / q_threshold**2
-        b = 2 * dq_dt_at_q_threshold / q_threshold + self.r / self.l
-        dq_dt_smooth = a * q_flow**2 + b * q_flow
-
+        # Use smooth version below q_threshold
         dq_dt = jnp.where((dp > 0) | (q_flow > q_threshold), dq_dt, dq_dt_smooth)
+
+        # When q<0, use linear extrapolation
+        dq_dt = jnp.where((dp > 0) | (q_flow > 0), dq_dt, -self.r_reverse * q_flow / self.l)
 
         return dq_dt
