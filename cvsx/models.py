@@ -1,5 +1,4 @@
-from dataclasses import fields
-from typing import Optional
+from dataclasses import field
 
 import diffrax
 import equinox as eqx
@@ -8,6 +7,7 @@ import jax.numpy as jnp
 
 from cvsx import components as c
 from cvsx import cardiac_drivers as drv
+from cvsx import averaging as avg
 
 # from cvsx import parameters as p
 from cvsx import respiratory as resp
@@ -33,6 +33,7 @@ class SmithCVS(eqx.Module):
     p_pl_affects_pu_and_pa: bool = True
     p_pl_is_input: bool = False
     v_spt_method: str = "solver"
+    bp_measurement_models: dict[str, avg.MovingAverage] = field(default_factory=dict)
 
     def __call__(
         self,
@@ -63,14 +64,18 @@ class SmithCVS(eqx.Module):
         if self.cd.dynamic:
             derivatives["s"] = ds_dt
 
+        outputs = p_v | flow_rates
+        outputs["e_t"] = e_t
+
+        for pressure, model in self.bp_measurement_models.items():
+            derivatives[pressure] = model(states[pressure], outputs)
+
         # jax.debug.print("{t}", t=t)
         # jax.debug.print("{t}\n{states}\n{derivatives}", t=t, states=states, derivatives=derivatives)
 
         if not return_outputs:
             return derivatives
 
-        outputs = p_v | flow_rates
-        outputs["e_t"] = e_t
         return derivatives, outputs
 
     @property
@@ -169,7 +174,7 @@ class SmithCVS(eqx.Module):
             if vessel.inertial:
                 derivatives[name] = vessel.flow_rate_deriv(
                     t, p_v[p_upstream], p_v[p_downstream], flow_rates[name]
-            )
+                )
 
         return derivatives
 

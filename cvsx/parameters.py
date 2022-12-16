@@ -5,6 +5,7 @@ import jax.numpy as jnp
 from cvsx.unit_conversions import convert
 from cvsx import cardiac_drivers as drv
 from cvsx import components as c
+from cvsx import averaging as avg
 
 
 smith_2007 = {
@@ -293,6 +294,7 @@ def build_parameter_tree(
     inertial: bool = False,
     cd: Optional[str | drv.CardiacDriverBase] = None,
     valve_class: Type[c.Valve] | dict[str, Type[c.Valve]] = c.Valve,
+    bp_measurement: bool = False,
 ) -> dict:
     parameters = {}
     for valve in ("mt", "av", "tc", "pv"):
@@ -314,5 +316,17 @@ def build_parameter_tree(
         parameters["cd"] = cd
 
     parameters["p_pl"] = cvs_parameters[source]["p_pl"]
+
+    if bp_measurement:
+        parameters["bp_measurement_models"] = {
+            "p_aom": avg.MovingAverage("p_ao", jnp.array(2.0)),
+            "p_pam": avg.MovingAverage("p_pa", jnp.array(2.0)),
+            "p_vcm": avg.MovingAverage("p_vc", jnp.array(2.0)),
+            "p_aos": avg.GatedMovingAverage(
+                "p_ao",
+                jnp.array(0.01),
+                lambda outputs: outputs["p_lv"] > outputs["p_ao"],
+            ),
+        }
 
     return parameters
