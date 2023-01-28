@@ -4,8 +4,6 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import diffrax
-import matplotlib.pyplot as plt
-import plotly.graph_objects as go
 
 jax.config.update("jax_enable_x64", True)
 
@@ -17,32 +15,39 @@ from cvsx.unit_conversions import convert
 import plots
 
 
-@partial(jax.jit, static_argnums=[0, 1, 2, 3, 4])
+@partial(jax.jit, static_argnums=list(range(11)))
 def main(
     dynamic_hr=False,
     inertial=True,
     jallon=False,
     valve_type="smith",
     v_spt_method="solver",
+    ode_solver=diffrax.Tsit5(),
+    max_steps=16**3,
+    fixed_step=False,
+    dt_dense=1e-3,
+    t1=20.0,
+    t_stabilise=0.0,
+    dt_fixed=1e-3,
     beta=0.1,
     hb=1.0,
     mu=1.0,
+    rtol=1e-3,
+    atol=1e-6,
+    dtmax=1e-2,
+    r_reverse=convert(1.0, "mmHg/ml"),
 ):
-
-    rtol = 1e-3
-    atol = 1e-6
 
     if dynamic_hr:
         f_hr = lambda t: 80 + 20 * jnp.tanh(0.3 * (t - 20))
         # f_hr = lambda t: jnp.full_like(t, fill_value=60.0)
+        cd = drv.SimpleCardiacDriver(hr=f_hr)
     else:
-        f_hr = 60.0
-
-    cd = drv.SimpleCardiacDriver(hr=f_hr)
+        cd = None
 
     model = models.SmithCVS
     if jallon:
-        parameter_source = "jallon"
+        parameter_source = "smith"
     else:
         parameter_source = "revie"  # "smith"
 
@@ -51,7 +56,10 @@ def main(
             valve_class = c.Valve
         case "regurgitating":
             valve_class = {
-                "mt": c.TwoWayValve,
+                "mt": partial(
+                    c.TwoWayValve,
+                    r_reverse=r_reverse,
+                ),
                 "tc": c.Valve,
                 "av": c.Valve,
                 "pv": c.Valve,
@@ -59,13 +67,16 @@ def main(
         case "smooth":
             if not inertial:
                 raise RuntimeError("Smooth valves must use inertial model")
-            valve_class = c.SmoothValve
+            valve_class = partial(
+                c.SmoothValve,
+                r_reverse=r_reverse,
+            )
         case "restoring" | "restoring_continuous":
             if not inertial:
                 raise RuntimeError("Restoring valves must use inertial model")
             valve_class = partial(
                 c.TwoWayValve,
-                r_reverse=convert(10, "mmHg/ml"),
+                r_reverse=r_reverse,
                 method=valve_type,
             )
         case _:
@@ -140,57 +151,155 @@ def main(
 
     # out_dbg = cvs(jnp.array(0.0), init_states, (nl_solver,))
 
-    ode_solver = diffrax.Heun()
     term = diffrax.ODETerm(cvs)
-    stepsize_controller = diffrax.PIDController(
-        rtol=rtol,
-        atol=atol,
-        dtmax=1e-2,
-        # pcoeff=0.4,
-        # icoeff=0.3,
-        # dcoeff=0.0,
-    )
+
+    if fixed_step:
+        stepsize_controller = diffrax.ConstantStepSize()
+        dt0 = dt_fixed
+        max_steps = int(t1 / dt0)
+    else:
+        stepsize_controller = diffrax.PIDController(
+            rtol=rtol,
+            atol=atol,
+            dtmax=dtmax,
+            pcoeff=0.4,
+            icoeff=0.3,
+            dcoeff=0.0,
+        )
+        dt0 = None
+
     res = diffrax.diffeqsolve(
         term,
         ode_solver,
         0.0,
-        2.0,
-        1e-3,
+        t1,
+        dt0,
         init_states,
         args=(nl_solver,),
-        # stepsize_controller=stepsize_controller,
-        max_steps=16**5,
-        saveat=diffrax.SaveAt(steps=True),
+        stepsize_controller=stepsize_controller,
+        max_steps=max_steps,
+        saveat=diffrax.SaveAt(steps=True, dense=True),
         adjoint=diffrax.NoAdjoint(),
     )
 
-    deriv, out = cvs(res.ts, res.ys, (nl_solver,), True)
+    deriv, out = cvs(res.ts, res.ys, (nl_solver,), return_outputs=True)
 
-    return res, deriv, out
+    t_dense = jnp.linspace(t_stabilise, t1, int((t1 - t_stabilise) / dt_dense) + 1)
+    y_dense = jax.vmap(res.evaluate)(t_dense)
+    deriv_dense, out_dense = cvs(t_dense, y_dense, (nl_solver,), return_outputs=True)
+    deriv_dense_approx = jax.vmap(res.derivative)(t_dense)
+
+    return res, deriv, out, t_dense, y_dense, deriv_dense, deriv_dense_approx, out_dense
+
+
+def jallon_sweep(
+    variable="beta",
+    values=(0.0, 0.1, 0.5, 1.0, 1.5, 2.0),
+    **kwargs,
+):
+    runs = {
+        f"Jallon ({variable}={val})": kwargs
+        | {"jallon": True, "inertial": False, "v_spt_method": "jallon", variable: val}
+        for val in values
+    }
+
+    return runs
+
+
+def jallon_comparison(**kwargs):
+    jallon_kwargs = {
+        "jallon": True,
+        "inertial": False,
+        "v_spt_method": "jallon",
+    }
+    runs = {
+        "Jallon": kwargs | jallon_kwargs | {"beta": 0.0, "hb": 1.0},
+        "Stabilised": kwargs | jallon_kwargs | {"beta": 0.1, "hb": 1.0},
+        "Stabilised, HB=0": kwargs | jallon_kwargs | {"beta": 0.1, "hb": 0.0},
+    }
+
+    return runs
+
+
+def inertial_comparison(**kwargs):
+    runs = {
+        "Non-inertial": kwargs | {"inertial": False},
+        "Inertial": kwargs | {"inertial": True},
+    }
+
+    return runs
+
+
+def rtol_sweep(**kwargs):
+    runs = {
+        "1e-3": kwargs | {"rtol": 1e-3},
+        "1e-4": kwargs | {"rtol": 1e-4},
+        "1e-5": kwargs | {"rtol": 1e-5},
+        "1e-6": kwargs | {"rtol": 1e-6},
+    }
+
+    return runs
+
+
+def atol_sweep(**kwargs):
+    runs = {
+        "1e-5": kwargs | {"atol": 1e-5},
+        "1e-6": kwargs | {"atol": 1e-6},
+        "1e-7": kwargs | {"atol": 1e-7},
+        "1e-8": kwargs | {"atol": 1e-8},
+    }
+
+    return runs
+
+
+def ventricular_interaction_comparison(**kwargs):
+    runs = {
+        "Linearised": kwargs | {"v_spt_method": "jallon"},
+        "Standard": kwargs | {"v_spt_method": "solver"},
+        # "None": kwargs | {"v_spt_method": "off"},
+    }
+
+    return runs
+
+
+def valve_comparison(
+    restoring=True,
+    restoring_continuous=True,
+    smooth=True,
+    mitral_regurgitation=True,
+    **kwargs,
+):
+    runs = {"standard": kwargs | {"inertial": True}}
+
+    if restoring:
+        runs["restoring"] = kwargs | {"inertial": True, "valve_type": "restoring"}
+
+    if restoring_continuous:
+        runs["restoring_continuous"] = kwargs | {
+            "inertial": True,
+            "valve_type": "restoring_continuous",
+        }
+
+    if smooth:
+        runs["smooth"] = kwargs | {"inertial": True, "valve_type": "smooth"}
+
+    if mitral_regurgitation:
+        runs["mitral_regurgitation"] = kwargs | {"inertial": True, "valve_type": "regurgitating"}
+
+    return runs
 
 
 if __name__ == "__main__":
 
-    runs = {
-        # f"Jallon (beta={0.1})": {
-        #     "jallon": True,
-        #     "inertial": False,
-        #     "beta": 0.1,
-        #     "hb": 0.0,
-        #     "mu": 1.0,
-        # }
-        # for beta in [0.1, 0.5, 1.0, 1.5, 2.0]
-        # for mu in [0.0, 0.5, 1.0, 1.5, 2.0]
-        # "Jallon inertial": {"jallon": True, "inertial": True, "beta": 0.0},
-        # "Non-inertial": {"inertial": False},
-        "standard": {"inertial": True},
-        "mitral regurgitation": {"inertial": True, "valve_type": "regurgitating"},
-        "restoring": {"inertial": True, "valve_type": "restoring"},
-        "restoring_continuous": {"inertial": True, "valve_type": "restoring_continuous"},
-        "smooth": {"inertial": True, "valve_type": "smooth"},
-        # "Regurgitating": {"valve_type": "mitral_regurgitation"},
-        # "Regurgitating non-inertial": {"valve_type": "mitral_regurgitation", "inertial": False},
-    }
+    runs = jallon_sweep(
+        variable="hb",
+        values=(0.0, 0.5, 1.0),
+        t1=60.0,
+        dtmax=1e-2,
+        rtol=1e-4,
+        atol=1e-7,
+        max_steps=16**5,
+    )
     n_repeats = 1
 
     with jax.default_device(jax.devices("cpu")[0]):
@@ -205,31 +314,73 @@ if __name__ == "__main__":
         for name, kwargs in runs.items():
             for i in range(n_repeats):
                 ta = perf_counter()
-                res, deriv, out = main(**kwargs)
+                (
+                    res,
+                    deriv,
+                    out,
+                    t_dense,
+                    y_dense,
+                    deriv_dense,
+                    deriv_dense_approx,
+                    out_dense,
+                ) = main(**kwargs)
                 tb = perf_counter()
                 print(f'{name}: {tb-ta:.6f}s, {res.stats["num_steps"]} steps')
-                results[name] = (res, deriv, out)
+
+                valid_inds = jnp.isfinite(res.ts)
+                ts = res.ts[valid_inds]
+                ys = {key: val[valid_inds] for key, val in res.ys.items()}
+                deriv = {key: val[valid_inds] for key, val in deriv.items()}
+                out = {key: val[valid_inds] for key, val in out.items()}
+
+                results[name] = (
+                    ts,
+                    ys,
+                    deriv,
+                    out,
+                    t_dense,
+                    y_dense,
+                    deriv_dense,
+                    deriv_dense_approx,
+                    out_dense,
+                )
 
     plot_dict = {
-        "lv.html": plots.plot_lv_pressures,
-        "rv.html": plots.plot_rv_pressures,
-        "vent.html": plots.plot_vent_interaction,
-        "outputs.html": plots.plot_outputs,
-        # "resp.html": plots.plot_resp,
-        "states.html": plots.plot_states,
+        "lv": plots.plot_lv_pressures,
+        "rv": plots.plot_rv_pressures,
+        "vent": plots.plot_vent_interaction,
+        "outputs": plots.plot_outputs,
+        "resp": plots.plot_resp,
+        "states": plots.plot_states,
     }
 
     for file, func in plot_dict.items():
         fig = None
-        for i, (name, (res, deriv, out)) in enumerate(results.items()):
+        for i, (
+            name,
+            (ts, ys, deriv, out, t_dense, y_dense, deriv_dense, deriv_dense_approx, out_dense),
+        ) in enumerate(results.items()):
             fig = func(
-                res.ts,
-                out | res.ys | {f"d{key}_dt": val for key, val in deriv.items()},
+                ts,
+                out | ys | {f"d{key}_dt": val for key, val in deriv.items()},
                 fig,
                 plots.qualitative.Plotly[i],
                 group=name,
+                mode="markers",
+                marker_size=4,
             )
-        fig.write_html(file, include_mathjax="cdn")
+            fig = func(
+                t_dense,
+                out_dense
+                | y_dense
+                | {f"d{key}_dt": val for key, val in deriv_dense_approx.items()},
+                fig,
+                plots.qualitative.Plotly[i],
+                group=name,
+                mode="lines",
+                showlegend=False,
+            )
+        fig.write_html(f"{file}.html", include_mathjax="cdn")
 
     # res, deriv, out = results["Restoring"]
     # restoring_valve = c.RestoringInertialValve(**p.revie_2012["mt"])
