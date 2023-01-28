@@ -96,7 +96,7 @@ class PlotDefinition:
                     fig,
                     colour=None,
                     dash=next(dash),
-                    group=name if len(self.plots) > 1 else None,
+                    group=name if len(results) > 1 else None,
                     mode="lines",
                     showlegend="all",
                 )
@@ -178,6 +178,22 @@ if __name__ == "__main__":
                     "rtol": 1e-4,
                     "atol": 1e-7,
                     "t_stabilise": 20.0,
+                    "max_steps": 16**4,
+                }
+            },
+            {
+                "lv": plots.plot_lv_pressures,
+                "rv": plots.plot_rv_pressures,
+                "vent": plots.plot_vent_interaction,
+            },
+        ),
+        PlotDefinition(
+            "var-hr",
+            {
+                "Variable HR": {
+                    "dynamic_hr": True,
+                    "t_stabilise": 10.0,
+                    "t1": 30.0,
                     "max_steps": 16**4,
                 }
             },
