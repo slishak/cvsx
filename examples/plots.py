@@ -51,12 +51,14 @@ def _plot_vertical_grid(
             line_color=colour or "black",
             line_dash=dash or "solid",
             mode="lines",
+            opacity=1.0 if dash is None else 0.0,
             **kwargs,
         )
 
     colours = cycle(qualitative.Plotly)
 
     for i, chans in enumerate(channels):
+        dashes = cycle(["solid", "dash", "dot", "dashdot"])
         for chan in chans:
             try:
                 y = outputs[chan]
@@ -72,11 +74,13 @@ def _plot_vertical_grid(
                 y=y,
                 name=chan,
                 legendgroup=group,
-                showlegend=group is None or showlegend == "all",
+                showlegend=(
+                    (group is None and dash is None) or len(chans) > 1 or showlegend == "all"
+                ),
                 row=i + 1,
                 col=1,
                 line_color=colour or next(colours),
-                line_dash=dash or "solid",
+                line_dash=dash or next(dashes),
                 mode=mode,
                 **kwargs,
             )
@@ -160,9 +164,9 @@ def plot_vent_interaction(
     if fig is None:
         fig = make_subplots(3, 2, shared_xaxes="columns", specs=specs)
         fig.update_xaxes(row=3, col=1, title_text="Time (s)")
-        fig.update_yaxes(row=1, col=1, title_text="Ventricle volumes (ml)", minor_showgrid=True)
-        fig.update_yaxes(row=2, col=1, title_text="Cardiac driver", minor_showgrid=True)
-        fig.update_yaxes(row=3, col=1, title_text="Septum volume (ml)", minor_showgrid=True)
+        fig.update_yaxes(row=1, col=1, title_text="Ventricle volume (ml)", minor_showgrid=True)
+        fig.update_yaxes(row=2, col=1, title_text="e(t)", minor_showgrid=True)
+        fig.update_yaxes(row=3, col=1, title_text="v_spt (ml)", minor_showgrid=True)
         fig.update_yaxes(col=2, title_text="Ventricle pressure (mmHg)", minor_showgrid=True)
         fig.update_xaxes(col=2, title_text="Ventricle volume (ml)", minor_showgrid=True)
 
@@ -199,7 +203,7 @@ def plot_vent_interaction(
         y=convert(outputs["v_rv"], to="ml"),
         name="Right ventricle",
         legendgroup=group,
-        showlegend=colour is None and group is None,
+        showlegend=True,
         row=1,
         col=1,
         line_color=colour or qualitative.Plotly[1],
@@ -212,7 +216,7 @@ def plot_vent_interaction(
         y=outputs["e_t"],
         name="e(t)",
         legendgroup=group,
-        showlegend=colour is None and group is None,
+        showlegend=False,
         row=2,
         col=1,
         line_color=colour or "black",
@@ -226,7 +230,7 @@ def plot_vent_interaction(
             y=outputs["p_pl"],
             name="p_pl",
             legendgroup=group,
-            showlegend=colour is None and group is None,
+            showlegend=False,
             row=2,
             col=1,
             line_color=colour or "red",
@@ -241,9 +245,9 @@ def plot_vent_interaction(
         fig.update_yaxes(
             row=2,
             col=1,
-            title_text="Pleural pressure (mmHg)",
+            title_text="p_pl (mmHg)",
             title_font_color="red",
-            secondary_y=True
+            secondary_y=True,
         )
 
     fig.add_scatter(
@@ -251,7 +255,7 @@ def plot_vent_interaction(
         y=convert(outputs["v_spt"], to="ml"),
         name="v_spt",
         legendgroup=group,
-        showlegend=colour is None and group is None,
+        showlegend=False,
         row=3,
         col=1,
         line_color=colour or "black",
@@ -264,7 +268,7 @@ def plot_vent_interaction(
         y=convert(outputs["p_lv"], to="mmHg"),
         name="Left",
         legendgroup=group,
-        showlegend=colour is None and group is None,
+        showlegend=False,
         row=1,
         col=2,
         line_color=colour or qualitative.Plotly[0],
@@ -277,11 +281,11 @@ def plot_vent_interaction(
         y=convert(outputs["p_rv"], to="mmHg"),
         name="Right",
         legendgroup=group,
-        showlegend=colour is None and group is None,
+        showlegend=False,
         row=1,
         col=2,
         line_color=colour or qualitative.Plotly[1],
-        line_dash=dash or "solid",
+        line_dash=dash or "dash",
         mode=mode,
         **kwargs,
     )
@@ -551,14 +555,16 @@ def plot_spt_resp(
     **kwargs,
 ):
 
-    y_labels = ["Pleural pressure", "Septum volume"]
+    y_labels = ["Ventricle volume", "p_pl", "v_spt"]
 
     channels = [
+        ["v_lv", "v_rv"],
         ["p_pl"],
         ["v_spt"],
     ]
 
     units = [
+        "ml",
         "mmHg",
         "ml",
     ]
