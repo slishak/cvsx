@@ -35,6 +35,7 @@ def main(
     rtol=1e-3,
     atol=1e-6,
     dtmax=1e-2,
+    p_pl=convert(-4.0, "mmHg"),
     r_reverse=convert(1.0, "mmHg/ml"),
 ):
 
@@ -47,7 +48,7 @@ def main(
 
     model = models.SmithCVS
     if jallon:
-        parameter_source = "smith"
+        parameter_source = "jallon_hr_only"
     else:
         parameter_source = "revie"  # "smith"
 
@@ -88,6 +89,7 @@ def main(
         cd,
         valve_class,
     )
+    params["p_pl"] = p_pl
 
     cvs = model(
         **params,
@@ -206,6 +208,11 @@ def jallon_sweep(
     return runs
 
 
+def p_pl_sweep(**kwargs):
+    runs = {f"p_pl={val}": kwargs | {"p_pl": val} for val in [-2, -4, -6, -8, -10]}
+    return runs
+
+
 def jallon_comparison(**kwargs):
     jallon_kwargs = {
         "jallon": True,
@@ -291,14 +298,25 @@ def valve_comparison(
 
 if __name__ == "__main__":
 
-    runs = jallon_sweep(
-        variable="hb",
-        values=(0.0, 0.5, 1.0),
-        t1=60.0,
-        dtmax=1e-2,
+    # runs = jallon_sweep(
+    #     variable="hb",
+    #     values=(0.0, 0.5, 1.0),
+    #     t1=60.0,
+    #     dtmax=1e-2,
+    #     rtol=1e-4,
+    #     atol=1e-7,
+    #     max_steps=16**5,
+    # )
+    runs = p_pl_sweep(
+        t1=20.0,
         rtol=1e-4,
         atol=1e-7,
-        max_steps=16**5,
+        t_stabilise=0.0,
+        # jallon=True,
+        inertial=False,
+        # beta=0.0,
+        # hb=1.0,
+        max_steps=16**4,
     )
     n_repeats = 1
 
