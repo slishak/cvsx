@@ -6,11 +6,12 @@ from typing import Union
 import jax
 import jax.numpy as jnp
 import plotly.io as pio
+from pypdf import PdfReader
 
 jax.config.update("jax_enable_x64", True)
 pio.templates.default = "plotly_white"
 # https://github.com/plotly/plotly.py/issues/3469#issuecomment-994907721
-pio.kaleido.scope.mathjax = None
+# pio.kaleido.scope.mathjax = None
 
 import plots
 import simulate as s
@@ -20,7 +21,7 @@ import simulate as s
 class PlotDefinition:
     name: str
     runs: dict
-    plots: dict
+    plot_funcs: dict
     n_repeats: int = 1
     display_mode: str = "dash"
     showlegend: Union[bool, str] = "all"
@@ -79,7 +80,7 @@ class PlotDefinition:
         self.compile()
         results = self.simulate()
 
-        for file, func in self.plots.items():
+        for file, func in self.plot_funcs.items():
             if self.display_mode == "dash":
                 dash = iter(["solid", "dash", "dot"])
                 colour = repeat(None)
@@ -115,8 +116,17 @@ class PlotDefinition:
                     mode="lines",
                     showlegend=self.showlegend,
                 )
-            fig.write_html(f"plots/{self.name}-{file}.html", include_mathjax="cdn")
-            fig.write_image(f"plots/{self.name}-{file}.pdf", width=1200, height=600)
+            fig.write_html(f"outputs/{self.name}-{file}.html", include_mathjax="cdn")
+            fig.write_image(f"outputs/{self.name}-{file}.svg", width=1200, height=600)
+            fig.write_image(f"outputs/{self.name}-{file}.pdf", width=1200, height=600)
+            for i in range(3):
+                reader = PdfReader(f"outputs/{self.name}-{file}.pdf")
+                text = reader.pages[0].extract_text()
+                if "Loading [MathJax]" not in text:
+                    break
+                print(f"Retrying outputs/{self.name}-{file}.pdf")
+            else:
+                print(f"Failed outputs/{self.name}-{file}.pdf")
 
 
 if __name__ == "__main__":
@@ -131,6 +141,9 @@ if __name__ == "__main__":
                 atol=1e-7,
             ),
             {
+                # Fails first time, so dummy plot to start with
+                # https://github.com/plotly/plotly.py/issues/3469#issuecomment-994907721
+                "_": plots.plot_lv_pressures,
                 "lv": plots.plot_lv_pressures,
                 "rv": plots.plot_rv_pressures,
                 "vent": plots.plot_vent_interaction,
@@ -159,29 +172,29 @@ if __name__ == "__main__":
             display_mode="colour",
             showlegend=True,
         ),
-        PlotDefinition(
-            "jallon",
-            {
-                "Jallon": {
-                    "jallon": True,
-                    "inertial": False,
-                    "v_spt_method": "jallon",
-                    "beta": 0.0,
-                    "hb": 1.0,
-                    # "dtmax": 1e-2,
-                    "t1": 100.0,
-                    "rtol": 1e-4,
-                    "atol": 1e-7,
-                    "t_stabilise": 20.0,
-                    "max_steps": 16**4,
-                }
-            },
-            {
-                "lv": plots.plot_lv_pressures,
-                "rv": plots.plot_rv_pressures,
-                "vent": plots.plot_vent_interaction,
-            },
-        ),
+        # PlotDefinition(
+        #     "jallon",
+        #     {
+        #         "Jallon": {
+        #             "jallon": True,
+        #             "inertial": False,
+        #             "v_spt_method": "jallon",
+        #             "beta": 0.0,
+        #             "hb": 1.0,
+        #             # "dtmax": 1e-2,
+        #             "t1": 100.0,
+        #             "rtol": 1e-4,
+        #             "atol": 1e-7,
+        #             "t_stabilise": 20.0,
+        #             "max_steps": 16**4,
+        #         }
+        #     },
+        #     {
+        #         "lv": plots.plot_lv_pressures,
+        #         "rv": plots.plot_rv_pressures,
+        #         "vent": plots.plot_vent_interaction,
+        #     },
+        # ),
         PlotDefinition(
             "jallon-stab",
             {
@@ -204,6 +217,42 @@ if __name__ == "__main__":
                 "rv": plots.plot_rv_pressures,
                 "vent": plots.plot_vent_interaction,
             },
+        ),
+        PlotDefinition(
+            "jallon-stab-compare",
+            {
+                "Jallon": {
+                    "jallon": True,
+                    "inertial": False,
+                    "v_spt_method": "jallon",
+                    "beta": 0.0,
+                    "hb": 1.0,
+                    # "dtmax": 1e-2,
+                    "t1": 200.0,
+                    "rtol": 1e-4,
+                    "atol": 1e-7,
+                    "t_stabilise": 20.0,
+                    "max_steps": 16**4,
+                },
+                "Stabilised": {
+                    "jallon": True,
+                    "inertial": False,
+                    "v_spt_method": "jallon",
+                    "beta": 0.1,
+                    "hb": 0.0,
+                    # "dtmax": 1e-2,
+                    "t1": 200.0,
+                    "rtol": 1e-4,
+                    "atol": 1e-7,
+                    "t_stabilise": 20.0,
+                    "max_steps": 16**4,
+                },
+            },
+            {
+                "drift": plots.plot_drift,
+            },
+            display_mode="colour",
+            showlegend=True,
         ),
         PlotDefinition(
             "var-hr",

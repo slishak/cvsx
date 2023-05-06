@@ -1,5 +1,6 @@
 from itertools import cycle
 
+import numpy as np
 from plotly.subplots import make_subplots
 from plotly.colors import qualitative
 
@@ -7,11 +8,17 @@ from cvsx.unit_conversions import convert
 
 
 def latex(s: str):
-    if s.startswith("p_") or s.startswith("q_"):
+    if s.startswith("p_") or s.startswith("q_") or s.startswith("v_"):
         s = s[0].upper() + s[1:]
-    if "_" in s:
-        s = s.replace("_", "_{") + "}"
-    return rf"$\Large{{{s}}}$"
+    parts = []
+    for substr in s.split(" "):
+        if "_" in substr:
+            substr = substr.replace("_", "_{\\rm ") + "}"
+        if substr.startswith("("):
+            substr = rf"\text{{ {substr} }}"
+        parts.append(substr)
+    s = " ".join(parts)
+    return rf"$ \small{{ {s} }}$"
 
 
 def _plot_vertical_grid(
@@ -26,6 +33,7 @@ def _plot_vertical_grid(
     group=None,
     mode="lines",
     showlegend=True,
+    accumulate_max=False,
     **kwargs,
 ):
     if fig is None:
@@ -72,7 +80,7 @@ def _plot_vertical_grid(
             fig.add_scatter(
                 x=t,
                 y=y,
-                name=chan,
+                name=latex(chan),
                 legendgroup=group,
                 showlegend=(
                     (group is None and dash is None) or len(chans) > 1 or showlegend == "all"
@@ -84,6 +92,23 @@ def _plot_vertical_grid(
                 mode=mode,
                 **kwargs,
             )
+
+            if accumulate_max:
+                fig.add_scatter(
+                    x=t,
+                    y=np.maximum.accumulate(y),
+                    name=chan,
+                    legendgroup=group,
+                    showlegend=(
+                        (group is None and dash is None) or len(chans) > 1 or showlegend == "all"
+                    ),
+                    row=i + 1,
+                    col=1,
+                    line_color=colour or next(colours),
+                    line_dash=dash or next(dashes),
+                    mode=mode,
+                    **kwargs,
+                )
 
     return fig
 
@@ -110,7 +135,18 @@ def plot_lv_pressures(
     units = ["mmHg", "ml/s"]
 
     return _plot_vertical_grid(
-        y_labels, channels, units, t, outputs, fig, colour, dash, group, mode, showlegend, **kwargs
+        y_labels,
+        channels,
+        units,
+        t,
+        outputs,
+        fig,
+        colour,
+        dash,
+        group,
+        mode,
+        showlegend,
+        **kwargs,
     )
 
 
@@ -165,8 +201,8 @@ def plot_vent_interaction(
         fig = make_subplots(3, 2, shared_xaxes="columns", specs=specs)
         fig.update_xaxes(row=3, col=1, title_text="Time (s)")
         fig.update_yaxes(row=1, col=1, title_text="Ventricle volume (ml)", minor_showgrid=True)
-        fig.update_yaxes(row=2, col=1, title_text="e(t)", minor_showgrid=True)
-        fig.update_yaxes(row=3, col=1, title_text="v_spt (ml)", minor_showgrid=True)
+        fig.update_yaxes(row=2, col=1, title_text=latex("e(t)"), minor_showgrid=True)
+        fig.update_yaxes(row=3, col=1, title_text=latex("v_spt (ml)"), minor_showgrid=True)
         fig.update_yaxes(col=2, title_text="Ventricle pressure (mmHg)", minor_showgrid=True)
         fig.update_xaxes(col=2, title_text="Ventricle volume (ml)", minor_showgrid=True)
 
@@ -214,7 +250,7 @@ def plot_vent_interaction(
     fig.add_scatter(
         x=t,
         y=outputs["e_t"],
-        name="e(t)",
+        name=latex("e(t)"),
         legendgroup=group,
         showlegend=False,
         row=2,
@@ -224,11 +260,12 @@ def plot_vent_interaction(
         mode=mode,
         **kwargs,
     )
+    p_pl_plotted = False
     try:
         fig.add_scatter(
             x=t,
             y=outputs["p_pl"],
-            name="p_pl",
+            name=latex("p_pl"),
             legendgroup=group,
             showlegend=False,
             row=2,
@@ -242,18 +279,46 @@ def plot_vent_interaction(
     except KeyError:
         pass
     else:
+        p_pl_plotted = True
         fig.update_yaxes(
             row=2,
             col=1,
-            title_text="p_pl (mmHg)",
+            title_text=latex("p_pl (mmHg)"),
             title_font_color="red",
             secondary_y=True,
         )
 
+    if not p_pl_plotted:
+        try:
+            fig.add_scatter(
+                x=t,
+                y=outputs["ds_dt"] * 60,
+                name=latex("HR(t) (bpm)"),
+                legendgroup=group,
+                showlegend=False,
+                row=2,
+                col=1,
+                line_color=colour or "red",
+                line_dash=dash or "solid",
+                mode=mode,
+                secondary_y=True,
+                **kwargs,
+            )
+        except KeyError:
+            pass
+        else:
+            fig.update_yaxes(
+                row=2,
+                col=1,
+                title_text=latex("HR(t) (bpm)"),
+                title_font_color="red",
+                secondary_y=True,
+            )
+
     fig.add_scatter(
         x=t,
         y=convert(outputs["v_spt"], to="ml"),
-        name="v_spt",
+        name=latex("v_spt"),
         legendgroup=group,
         showlegend=False,
         row=3,
@@ -555,7 +620,7 @@ def plot_spt_resp(
     **kwargs,
 ):
 
-    y_labels = ["Ventricle volume", "p_pl", "v_spt"]
+    y_labels = ["Ventricle volume", latex("p_pl"), latex("v_spt")]
 
     channels = [
         ["v_lv", "v_rv"],
@@ -641,3 +706,50 @@ def plot_states(
                 pass
 
     return fig
+
+
+def plot_drift(
+    t,
+    outputs,
+    fig=None,
+    colour=qualitative.Plotly[0],
+    dash=None,
+    group=None,
+    mode="lines",
+    showlegend=True,
+    **kwargs,
+):
+
+    y_labels = [
+        latex("p_pa"),
+        latex("p_pl"),
+        latex("v_alv"),
+    ]
+
+    channels = [
+        ["p_pa"],
+        ["p_pl"],
+        ["v_alv"],
+    ]
+
+    units = [
+        "mmHg",
+        "mmHg",
+        "ml",
+    ]
+
+    return _plot_vertical_grid(
+        y_labels,
+        channels,
+        units,
+        t,
+        outputs,
+        fig,
+        colour,
+        dash,
+        group,
+        mode,
+        showlegend,
+        # accumulate_max=True,
+        **kwargs,
+    )
