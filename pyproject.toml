@@ -1,3 +1,47 @@
+[project]
+name = "cvsx"
+version = "0.0.1"
+authors = [
+  { name="Sam Lishak", email="sam.lishak.21@ucl.ac.uk" },
+]
+description = "Cardiovascular system models in JAX with Diffrax"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE.md"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "diffrax",
+    "equinox",
+    "optax",
+    "jaxopt",
+    "numpy",
+    "scipy",
+    "plotly",
+    "kaleido",
+    "matplotlib",
+    "pypdf",
+    "wfdb",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "pytest",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/slishak/cvsx"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["cvsx"]
+
 [tool.black]
 line-length = 100
 target-version = ['py310']
