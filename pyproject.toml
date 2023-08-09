@@ -13,25 +13,25 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "diffrax",
-    "equinox",
-    "numpy",
-    "scipy",
-    "plotly",
-    "kaleido",
-    "matplotlib",
-    "pypdf",
+    "diffrax~0.4.1",
+    "equinox~0.10.11",
+    "numpy~1.25.2",
+    "scipy~1.11.1",
+    "plotly~5.15.0",
+    "kaleido~0.2.1",
+    "matplotlib~3.7.2",
+    "pypdf~3.15.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "black",
-    "pytest",
+    "black~23.3.0",
+    "pytest~7.3.1",
 ]
 estimation = [
-    "optax",
-    "jaxopt",
-    "wfdb",
+    "optax~0.1.7",
+    "jaxopt~0.7",
+    "wfdb~4.1.2",
 ]
 
 [project.urls]
