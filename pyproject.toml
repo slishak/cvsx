@@ -15,21 +15,23 @@ classifiers = [
 dependencies = [
     "diffrax",
     "equinox",
-    "optax",
-    "jaxopt",
     "numpy",
     "scipy",
     "plotly",
     "kaleido",
     "matplotlib",
     "pypdf",
-    "wfdb",
 ]
 
 [project.optional-dependencies]
 dev = [
     "black",
     "pytest",
+]
+estimation = [
+    "optax",
+    "jaxopt",
+    "wfdb",
 ]
 
 [project.urls]
