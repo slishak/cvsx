@@ -15,12 +15,13 @@ from cvsx.unit_conversions import convert
 import plots
 
 
-@partial(jax.jit, static_argnums=list(range(11)))
+@partial(jax.jit, static_argnums=list(range(12)))
 def main(
     dynamic_hr=False,
     inertial=True,
     jallon=False,
     valve_type="smith",
+    parameter_source="revie",
     v_spt_method="solver",
     ode_solver=diffrax.Tsit5(),
     max_steps=16**3,
@@ -38,7 +39,6 @@ def main(
     p_pl=convert(-4.0, "mmHg"),
     r_reverse=convert(1.0, "mmHg/ml"),
 ):
-
     if dynamic_hr:
         f_hr = lambda t: 80 + 20 * jnp.tanh(0.3 * (t - 20))
         # f_hr = lambda t: jnp.full_like(t, fill_value=60.0)
@@ -49,8 +49,6 @@ def main(
     model = models.SmithCVS
     if jallon:
         parameter_source = "jallon_hr_only"
-    else:
-        parameter_source = "revie"  # "smith"
 
     match valve_type:
         case "smith":
@@ -181,7 +179,6 @@ def main(
         stepsize_controller=stepsize_controller,
         max_steps=max_steps,
         saveat=diffrax.SaveAt(steps=True, dense=True),
-        adjoint=diffrax.NoAdjoint(),
     )
 
     deriv, out = cvs(res.ts, res.ys, (nl_solver,), return_outputs=True)
@@ -297,7 +294,6 @@ def valve_comparison(
 
 
 if __name__ == "__main__":
-
     # runs = jallon_sweep(
     #     variable="hb",
     #     values=(0.0, 0.5, 1.0),
