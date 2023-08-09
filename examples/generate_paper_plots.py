@@ -130,57 +130,94 @@ class PlotDefinition:
 
 
 if __name__ == "__main__":
-
     definitions = [
         PlotDefinition(
-            "inertial-compare",
-            s.inertial_comparison(
-                # dtmax=1.0,
-                t1=2.0,
-                rtol=1e-4,
-                atol=1e-7,
-            ),
+            "pv-diagram",
+            {
+                "Non-inertial": {
+                    "inertial": False,
+                    "parameter_source": "smith",
+                    "t1": 10.0,
+                    "rtol": 1e-4,
+                    "atol": 1e-7,
+                },
+            },
             {
                 # Fails first time, so dummy plot to start with
                 # https://github.com/plotly/plotly.py/issues/3469#issuecomment-994907721
                 "_": plots.plot_lv_pressures,
-                "lv": plots.plot_lv_pressures,
-                "rv": plots.plot_rv_pressures,
-                "vent": plots.plot_vent_interaction,
+                "pv": plots.plot_pv_diagram,
             },
-        ),
-        PlotDefinition(
-            "v_spt-method-compare",
-            s.ventricular_interaction_comparison(
-                # dtmax=1e-2,
-                t1=20.0,
-                rtol=1e-4,
-                atol=1e-7,
-                t_stabilise=0.0,
-                jallon=True,
-                inertial=False,
-                beta=0.0,
-                hb=1.0,
-                max_steps=16**4,
-            ),
-            {
-                # "lv": plots.plot_lv_pressures,
-                # "rv": plots.plot_rv_pressures,
-                "spt_resp": plots.plot_spt_resp,
-                "vent": plots.plot_vent_interaction,
-            },
-            display_mode="colour",
-            showlegend=True,
         ),
         # PlotDefinition(
-        #     "jallon",
+        #     "inertial-compare",
+        #     s.inertial_comparison(
+        #         # dtmax=1.0,
+        #         t1=2.0,
+        #         rtol=1e-4,
+        #         atol=1e-7,
+        #     ),
         #     {
-        #         "Jallon": {
+        #         "lv": plots.plot_lv_pressures,
+        #         "rv": plots.plot_rv_pressures,
+        #         "vent": plots.plot_vent_interaction,
+        #     },
+        # ),
+        # PlotDefinition(
+        #     "v_spt-method-compare",
+        #     s.ventricular_interaction_comparison(
+        #         # dtmax=1e-2,
+        #         t1=20.0,
+        #         rtol=1e-4,
+        #         atol=1e-7,
+        #         t_stabilise=0.0,
+        #         jallon=True,
+        #         inertial=False,
+        #         beta=0.0,
+        #         hb=1.0,
+        #         max_steps=16**4,
+        #     ),
+        #     {
+        #         # "lv": plots.plot_lv_pressures,
+        #         # "rv": plots.plot_rv_pressures,
+        #         "spt_resp": plots.plot_spt_resp,
+        #         "vent": plots.plot_vent_interaction,
+        #     },
+        #     display_mode="colour",
+        #     showlegend=True,
+        # ),
+        # # PlotDefinition(
+        # #     "jallon",
+        # #     {
+        # #         "Jallon": {
+        # #             "jallon": True,
+        # #             "inertial": False,
+        # #             "v_spt_method": "jallon",
+        # #             "beta": 0.0,
+        # #             "hb": 1.0,
+        # #             # "dtmax": 1e-2,
+        # #             "t1": 100.0,
+        # #             "rtol": 1e-4,
+        # #             "atol": 1e-7,
+        # #             "t_stabilise": 20.0,
+        # #             "max_steps": 16**4,
+        # #         }
+        # #     },
+        # #     {
+        # #         "lv": plots.plot_lv_pressures,
+        # #         "rv": plots.plot_rv_pressures,
+        # #         "vent": plots.plot_vent_interaction,
+        # #     },
+        # # ),
+        # PlotDefinition(
+        #     "jallon-stab",
+        #     {
+        #         "Stabilised": {
         #             "jallon": True,
         #             "inertial": False,
         #             "v_spt_method": "jallon",
-        #             "beta": 0.0,
-        #             "hb": 1.0,
+        #             "beta": 0.1,
+        #             "hb": 0.0,
         #             # "dtmax": 1e-2,
         #             "t1": 100.0,
         #             "rtol": 1e-4,
@@ -195,85 +232,62 @@ if __name__ == "__main__":
         #         "vent": plots.plot_vent_interaction,
         #     },
         # ),
-        PlotDefinition(
-            "jallon-stab",
-            {
-                "Stabilised": {
-                    "jallon": True,
-                    "inertial": False,
-                    "v_spt_method": "jallon",
-                    "beta": 0.1,
-                    "hb": 0.0,
-                    # "dtmax": 1e-2,
-                    "t1": 100.0,
-                    "rtol": 1e-4,
-                    "atol": 1e-7,
-                    "t_stabilise": 20.0,
-                    "max_steps": 16**4,
-                }
-            },
-            {
-                "lv": plots.plot_lv_pressures,
-                "rv": plots.plot_rv_pressures,
-                "vent": plots.plot_vent_interaction,
-            },
-        ),
-        PlotDefinition(
-            "jallon-stab-compare",
-            {
-                "Jallon": {
-                    "jallon": True,
-                    "inertial": False,
-                    "v_spt_method": "jallon",
-                    "beta": 0.0,
-                    "hb": 1.0,
-                    # "dtmax": 1e-2,
-                    "t1": 200.0,
-                    "rtol": 1e-4,
-                    "atol": 1e-7,
-                    "t_stabilise": 20.0,
-                    "max_steps": 16**4,
-                },
-                "Stabilised": {
-                    "jallon": True,
-                    "inertial": False,
-                    "v_spt_method": "jallon",
-                    "beta": 0.1,
-                    "hb": 0.0,
-                    # "dtmax": 1e-2,
-                    "t1": 200.0,
-                    "rtol": 1e-4,
-                    "atol": 1e-7,
-                    "t_stabilise": 20.0,
-                    "max_steps": 16**4,
-                },
-            },
-            {
-                "drift": plots.plot_drift,
-            },
-            display_mode="colour",
-            showlegend=True,
-        ),
-        PlotDefinition(
-            "var-hr",
-            {
-                "Variable HR": {
-                    "inertial": False,
-                    "dynamic_hr": True,
-                    "t_stabilise": 10.0,
-                    "t1": 30.0,
-                    "max_steps": 16**4,
-                    "rtol": 1e-4,
-                    "atol": 1e-7,
-                    # "dtmax": 1e-2,
-                }
-            },
-            {
-                "lv": plots.plot_lv_pressures,
-                "rv": plots.plot_rv_pressures,
-                "vent": plots.plot_vent_interaction,
-            },
-        ),
+        # PlotDefinition(
+        #     "jallon-stab-compare",
+        #     {
+        #         "Jallon": {
+        #             "jallon": True,
+        #             "inertial": False,
+        #             "v_spt_method": "jallon",
+        #             "beta": 0.0,
+        #             "hb": 1.0,
+        #             # "dtmax": 1e-2,
+        #             "t1": 200.0,
+        #             "rtol": 1e-4,
+        #             "atol": 1e-7,
+        #             "t_stabilise": 20.0,
+        #             "max_steps": 16**4,
+        #         },
+        #         "Stabilised": {
+        #             "jallon": True,
+        #             "inertial": False,
+        #             "v_spt_method": "jallon",
+        #             "beta": 0.1,
+        #             "hb": 0.0,
+        #             # "dtmax": 1e-2,
+        #             "t1": 200.0,
+        #             "rtol": 1e-4,
+        #             "atol": 1e-7,
+        #             "t_stabilise": 20.0,
+        #             "max_steps": 16**4,
+        #         },
+        #     },
+        #     {
+        #         "drift": plots.plot_drift,
+        #     },
+        #     display_mode="colour",
+        #     showlegend=True,
+        # ),
+        # PlotDefinition(
+        #     "var-hr",
+        #     {
+        #         "Variable HR": {
+        #             "inertial": False,
+        #             "dynamic_hr": True,
+        #             "t_stabilise": 10.0,
+        #             "t1": 30.0,
+        #             "max_steps": 16**4,
+        #             "rtol": 1e-4,
+        #             "atol": 1e-7,
+        #             # "dtmax": 1e-2,
+        #         }
+        #     },
+        #     {
+        #         "lv": plots.plot_lv_pressures,
+        #         "rv": plots.plot_rv_pressures,
+        #         "vent": plots.plot_vent_interaction,
+        #     },
+        # ),
     ]
 
     with jax.default_device(jax.devices("cpu")[0]):

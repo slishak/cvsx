@@ -5,6 +5,8 @@ from plotly.subplots import make_subplots
 from plotly.colors import qualitative
 
 from cvsx.unit_conversions import convert
+from cvsx import components as c
+from cvsx import parameters as p
 
 
 def latex(s: str):
@@ -124,7 +126,6 @@ def plot_lv_pressures(
     showlegend=True,
     **kwargs,
 ):
-
     y_labels = ["Pressure", "Flow rates"]
 
     channels = [
@@ -161,7 +162,6 @@ def plot_rv_pressures(
     showlegend=True,
     **kwargs,
 ):
-
     y_labels = ["Pressure", "Flow rates"]
 
     channels = [
@@ -179,6 +179,42 @@ def plot_rv_pressures(
     )
 
 
+def plot_pv_diagram(
+    t,
+    outputs,
+    fig=None,
+    colour=qualitative.Plotly[0],
+    dash=None,
+    group=None,
+    mode="lines",
+    showlegend=True,
+    **kwargs,
+):
+    if fig is None:
+        fig = make_subplots(1, 1)
+        fig.update_xaxes(row=1, col=1, title_text="Ventricle volume")
+        fig.update_yaxes(row=1, col=1, title_text="Ventricle pressure")
+        lvf = c.PressureVolume(**p.smith_2007()["lvf"])
+        v = np.linspace(0, 0.120, 100)
+        p_es = lvf.p_es(0.0, v)
+        p_ed = lvf.p_ed(0.0, v)
+        fig.add_scatter(x=v, y=p_ed, line_color="black")
+        fig.add_scatter(x=v[:40], y=p_es[:40], line_color="black")
+
+    fig.add_scatter(
+        x=outputs["v_lvf"][t > 8],
+        y=outputs["p_lvf"][t > 8],
+        showlegend=False,
+        row=1,
+        col=1,
+        line_color="black",
+        mode=mode,
+        **kwargs,
+    )
+
+    return fig
+
+
 def plot_vent_interaction(
     t,
     outputs,
@@ -190,7 +226,6 @@ def plot_vent_interaction(
     showlegend=True,
     **kwargs,
 ):
-
     specs = [
         [{}, {"rowspan": 3}],
         [{"secondary_y": True}, None],
@@ -578,7 +613,6 @@ def plot_resp(
     showlegend=True,
     **kwargs,
 ):
-
     y_labels = [
         "Lienard states",
         "Lienard derivatives",
@@ -619,7 +653,6 @@ def plot_spt_resp(
     showlegend=True,
     **kwargs,
 ):
-
     y_labels = ["Ventricle volume", latex("p_pl"), latex("v_spt")]
 
     channels = [
@@ -649,7 +682,6 @@ def plot_states(
     showlegend=True,
     **kwargs,
 ):
-
     plot_spec = [
         [state, f"d{state}_dt"]
         for state in [
@@ -719,7 +751,6 @@ def plot_drift(
     showlegend=True,
     **kwargs,
 ):
-
     y_labels = [
         latex("p_pa"),
         latex("p_pl"),
