@@ -36,7 +36,7 @@ class FixedCardiacDriver(CardiacDriverBase):
 
 
 class SimpleCardiacDriver(FixedCardiacDriver):
-    b: jnp.ndarray = jnp.array(80.0)
+    b: float = 80.0
 
     def e(self, t: jnp.ndarray) -> jnp.ndarray:
         if self.dynamic:
@@ -47,12 +47,11 @@ class SimpleCardiacDriver(FixedCardiacDriver):
 
 
 class GaussianCardiacDriver(FixedCardiacDriver):
-    a: jnp.ndarray
-    b: jnp.ndarray
-    c: jnp.ndarray
+    a: float
+    b: float
+    c: float
 
     def e(self, t: jnp.ndarray) -> jnp.ndarray:
-
         t_1d = jnp.atleast_1d(t)
         f = lambda t_i: jnp.sum(self.a * jnp.exp(-self.b * (t_i - self.c) ** 2))
         f_v = jax.vmap(f, 0, 0)
